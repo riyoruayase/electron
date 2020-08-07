@@ -20,12 +20,14 @@
 #include "content/public/common/web_preferences.h"
 #include "electron/buildflags/buildflags.h"
 #include "net/base/filename_util.h"
-#include "services/service_manager/sandbox/switches.h"
+#include "sandbox/policy/switches.h"
 #include "shell/browser/native_window.h"
 #include "shell/browser/web_view_manager.h"
 #include "shell/common/gin_converters/value_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/options_switches.h"
+#include "shell/common/process_util.h"
+#include "third_party/blink/public/mojom/v8_cache_options.mojom.h"
 
 #if defined(OS_WIN)
 #include "ui/gfx/switches.h"
@@ -125,11 +127,22 @@ WebContentsPreferences::WebContentsPreferences(
   SetDefaultBoolIfUndefined(options::kWebviewTag, false);
   SetDefaultBoolIfUndefined(options::kSandbox, false);
   SetDefaultBoolIfUndefined(options::kNativeWindowOpen, false);
+  if (IsUndefined(options::kContextIsolation)) {
+    node::Environment* env = node::Environment::GetCurrent(isolate);
+    EmitWarning(env,
+                "The default of contextIsolation is deprecated and will be "
+                "changing from false to true in a future release of Electron.  "
+                "See https://github.com/electron/electron/issues/23506 for "
+                "more information",
+                "electron");
+  }
   SetDefaultBoolIfUndefined(options::kContextIsolation, false);
+  SetDefaultBoolIfUndefined(options::kWorldSafeExecuteJavaScript, false);
   SetDefaultBoolIfUndefined(options::kJavaScript, true);
   SetDefaultBoolIfUndefined(options::kImages, true);
   SetDefaultBoolIfUndefined(options::kTextAreasAreResizable, true);
   SetDefaultBoolIfUndefined(options::kWebGL, true);
+  SetDefaultBoolIfUndefined(options::kEnableWebSQL, true);
   bool webSecurity = true;
   SetDefaultBoolIfUndefined(options::kWebSecurity, webSecurity);
   // If webSecurity was explicity set to false, let's inherit that into
@@ -179,6 +192,10 @@ void WebContentsPreferences::SetDefaults() {
   }
 
   last_preference_ = preference_.Clone();
+}
+
+bool WebContentsPreferences::IsUndefined(base::StringPiece key) {
+  return !preference_.FindKeyOfType(key, base::Value::Type::BOOLEAN);
 }
 
 bool WebContentsPreferences::SetDefaultBoolIfUndefined(base::StringPiece key,
@@ -302,7 +319,7 @@ void WebContentsPreferences::AppendCommandLineSwitches(
   if (IsEnabled(options::kSandbox) || can_sandbox_frame) {
     command_line->AppendSwitch(switches::kEnableSandbox);
   } else if (!command_line->HasSwitch(switches::kEnableSandbox)) {
-    command_line->AppendSwitch(service_manager::switches::kNoSandbox);
+    command_line->AppendSwitch(sandbox::policy::switches::kNoSandbox);
     command_line->AppendSwitch(::switches::kNoZygote);
   }
 
@@ -334,6 +351,9 @@ void WebContentsPreferences::AppendCommandLineSwitches(
   // Run Electron APIs and preload script in isolated world
   if (IsEnabled(options::kContextIsolation))
     command_line->AppendSwitch(switches::kContextIsolation);
+
+  if (IsEnabled(options::kWorldSafeExecuteJavaScript))
+    command_line->AppendSwitch(switches::kWorldSafeExecuteJavaScript);
 
   // --background-color.
   std::string s;
@@ -419,6 +439,10 @@ void WebContentsPreferences::AppendCommandLineSwitches(
   }
 #endif
 
+  // Whether to allow the WebSQL api
+  if (IsEnabled(options::kEnableWebSQL))
+    command_line->AppendSwitch(switches::kEnableWebSQL);
+
   // We are appending args to a webContents so let's save the current state
   // of our preferences object so that during the lifetime of the WebContents
   // we can fetch the options used to initally configure the WebContents
@@ -480,6 +504,23 @@ void WebContentsPreferences::OverrideWebkitPrefs(
   std::string encoding;
   if (GetAsString(&preference_, "defaultEncoding", &encoding))
     prefs->default_encoding = encoding;
+
+  std::string v8_cache_options;
+  if (GetAsString(&preference_, "v8CacheOptions", &v8_cache_options)) {
+    if (v8_cache_options == "none") {
+      prefs->v8_cache_options = blink::mojom::V8CacheOptions::kNone;
+    } else if (v8_cache_options == "code") {
+      prefs->v8_cache_options = blink::mojom::V8CacheOptions::kCode;
+    } else if (v8_cache_options == "bypassHeatCheck") {
+      prefs->v8_cache_options =
+          blink::mojom::V8CacheOptions::kCodeWithoutHeatCheck;
+    } else if (v8_cache_options == "bypassHeatCheckAndEagerCompile") {
+      prefs->v8_cache_options =
+          blink::mojom::V8CacheOptions::kFullCodeWithoutHeatCheck;
+    } else {
+      prefs->v8_cache_options = blink::mojom::V8CacheOptions::kDefault;
+    }
+  }
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsPreferences)

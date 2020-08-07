@@ -8,33 +8,38 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "content/common/cursors/webcursor.h"
+#include "content/common/frame.mojom.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/favicon_url.h"
 #include "electron/buildflags/buildflags.h"
 #include "electron/shell/common/api/api.mojom.h"
 #include "gin/handle.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
+#include "gin/wrappable.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "shell/browser/api/frame_subscriber.h"
 #include "shell/browser/api/save_page_handler.h"
 #include "shell/browser/common_web_contents_delegate.h"
-#include "shell/common/gin_helper/trackable_object.h"
+#include "shell/browser/event_emitter_mixin.h"
+#include "shell/common/gin_helper/cleaned_up_at_exit.h"
+#include "shell/common/gin_helper/constructible.h"
+#include "shell/common/gin_helper/error_thrower.h"
 #include "ui/gfx/image/image.h"
 
 #if BUILDFLAG(ENABLE_PRINTING)
 #include "chrome/browser/printing/print_view_manager_basic.h"
 #include "components/printing/common/print_messages.h"
-#include "printing/backend/print_backend.h"
+#include "printing/backend/print_backend.h"  // nogncheck
 #include "shell/browser/printing/print_preview_message_handler.h"
 
 #if defined(OS_WIN)
@@ -43,7 +48,9 @@
 #endif
 
 #if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
-#include "extensions/browser/script_executor.h"
+namespace extensions {
+class ScriptExecutor;
+}
 #endif
 
 namespace blink {
@@ -57,6 +64,44 @@ class Dictionary;
 namespace network {
 class ResourceRequestBody;
 }
+
+namespace gin {
+
+class Arguments;
+
+template <>
+struct Converter<base::TerminationStatus> {
+  static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
+                                   const base::TerminationStatus& status) {
+    switch (status) {
+      case base::TERMINATION_STATUS_NORMAL_TERMINATION:
+        return gin::ConvertToV8(isolate, "clean-exit");
+      case base::TERMINATION_STATUS_ABNORMAL_TERMINATION:
+        return gin::ConvertToV8(isolate, "abnormal-exit");
+      case base::TERMINATION_STATUS_PROCESS_WAS_KILLED:
+        return gin::ConvertToV8(isolate, "killed");
+      case base::TERMINATION_STATUS_PROCESS_CRASHED:
+        return gin::ConvertToV8(isolate, "crashed");
+      case base::TERMINATION_STATUS_STILL_RUNNING:
+        return gin::ConvertToV8(isolate, "still-running");
+      case base::TERMINATION_STATUS_LAUNCH_FAILED:
+        return gin::ConvertToV8(isolate, "launch-failed");
+      case base::TERMINATION_STATUS_OOM:
+        return gin::ConvertToV8(isolate, "oom");
+#if defined(OS_WIN)
+      case base::TERMINATION_STATUS_INTEGRITY_FAILURE:
+        return gin::ConvertToV8(isolate, "integrity-failure");
+#endif
+      case base::TERMINATION_STATUS_MAX_ENUM:
+        NOTREACHED();
+        return gin::ConvertToV8(isolate, "");
+    }
+    NOTREACHED();
+    return gin::ConvertToV8(isolate, "");
+  }
+};
+
+}  // namespace gin
 
 namespace electron {
 
@@ -78,7 +123,6 @@ namespace api {
 class ExtendedWebContentsObserver : public base::CheckedObserver {
  public:
   virtual void OnCloseContents() {}
-  virtual void OnRendererResponsive() {}
   virtual void OnDraggableRegionsUpdated(
       const std::vector<mojom::DraggableRegionPtr>& regions) {}
   virtual void OnSetContentBounds(const gfx::Rect& rect) {}
@@ -91,7 +135,10 @@ class ExtendedWebContentsObserver : public base::CheckedObserver {
 };
 
 // Wrapper around the content::WebContents.
-class WebContents : public gin_helper::TrackableObject<WebContents>,
+class WebContents : public gin::Wrappable<WebContents>,
+                    public gin_helper::EventEmitterMixin<WebContents>,
+                    public gin_helper::Constructible<WebContents>,
+                    public gin_helper::CleanedUpAtExit,
                     public CommonWebContentsDelegate,
                     public content::WebContentsObserver,
                     public mojom::ElectronBrowser {
@@ -108,6 +155,8 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   // Create a new WebContents and return the V8 wrapper of it.
   static gin::Handle<WebContents> Create(v8::Isolate* isolate,
                                          const gin_helper::Dictionary& options);
+  static gin::Handle<WebContents> New(v8::Isolate* isolate,
+                                      const gin_helper::Dictionary& options);
 
   // Create a new V8 wrapper for an existing |web_content|.
   //
@@ -117,9 +166,10 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
       std::unique_ptr<content::WebContents> web_contents,
       Type type);
 
-  // Get the V8 wrapper of |web_content|, return empty handle if not wrapped.
-  static gin::Handle<WebContents> From(v8::Isolate* isolate,
-                                       content::WebContents* web_content);
+  // Get the api::WebContents associated with |web_contents|. Returns nullptr
+  // if there is no associated wrapper.
+  static WebContents* From(content::WebContents* web_contents);
+  static WebContents* FromID(int32_t id);
 
   // Get the V8 wrapper of the |web_contents|, or create one if not existed.
   //
@@ -129,8 +179,12 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
       v8::Isolate* isolate,
       content::WebContents* web_contents);
 
-  static void BuildPrototype(v8::Isolate* isolate,
-                             v8::Local<v8::FunctionTemplate> prototype);
+  // gin::Wrappable
+  static gin::WrapperInfo kWrapperInfo;
+  static v8::Local<v8::ObjectTemplate> FillObjectTemplate(
+      v8::Isolate*,
+      v8::Local<v8::ObjectTemplate>);
+  const char* GetTypeName() override;
 
   base::WeakPtr<WebContents> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
@@ -149,6 +203,7 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   // See https://github.com/electron/electron/issues/15133.
   void DestroyWebContents(bool async);
 
+  bool GetBackgroundThrottling() const;
   void SetBackgroundThrottling(bool allowed);
   int GetProcessID() const;
   base::ProcessId GetOSProcessID() const;
@@ -171,12 +226,12 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   const std::string GetWebRTCIPHandlingPolicy() const;
   void SetWebRTCIPHandlingPolicy(const std::string& webrtc_ip_handling_policy);
   bool IsCrashed() const;
-  void SetUserAgent(const std::string& user_agent, gin_helper::Arguments* args);
+  void SetUserAgent(const std::string& user_agent);
   std::string GetUserAgent();
   void InsertCSS(const std::string& css);
   v8::Local<v8::Promise> SavePage(const base::FilePath& full_file_path,
                                   const content::SavePageType& save_type);
-  void OpenDevTools(gin_helper::Arguments* args);
+  void OpenDevTools(gin::Arguments* args);
   void CloseDevTools();
   bool IsDevToolsOpened();
   bool IsDevToolsFocused();
@@ -194,9 +249,9 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   bool IsCurrentlyAudible();
   void SetEmbedder(const WebContents* embedder);
   void SetDevToolsWebContents(const WebContents* devtools);
-  v8::Local<v8::Value> GetNativeView() const;
-  void IncrementCapturerCount(gin_helper::Arguments* args);
-  void DecrementCapturerCount(gin_helper::Arguments* args);
+  v8::Local<v8::Value> GetNativeView(v8::Isolate* isolate) const;
+  void IncrementCapturerCount(gin::Arguments* args);
+  void DecrementCapturerCount(gin::Arguments* args);
   bool IsBeingCaptured();
 
 #if BUILDFLAG(ENABLE_PRINTING)
@@ -205,15 +260,15 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
                            base::string16 device_name,
                            bool silent,
                            base::string16 default_printer);
-  void Print(gin_helper::Arguments* args);
+  void Print(gin::Arguments* args);
   std::vector<printing::PrinterBasicInfo> GetPrinterList();
   // Print current page as PDF.
   v8::Local<v8::Promise> PrintToPDF(base::DictionaryValue settings);
 #endif
 
   // DevTools workspace api.
-  void AddWorkSpace(gin_helper::Arguments* args, const base::FilePath& path);
-  void RemoveWorkSpace(gin_helper::Arguments* args, const base::FilePath& path);
+  void AddWorkSpace(gin::Arguments* args, const base::FilePath& path);
+  void RemoveWorkSpace(gin::Arguments* args, const base::FilePath& path);
 
   // Editing commands.
   void Undo();
@@ -227,7 +282,7 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   void Unselect();
   void Replace(const base::string16& word);
   void ReplaceMisspelling(const base::string16& word);
-  uint32_t FindInPage(gin_helper::Arguments* args);
+  uint32_t FindInPage(gin::Arguments* args);
   void StopFindInPage(content::StopFindAction action);
   void ShowDefinitionForSelection();
   void CopyImageAt(int x, int y);
@@ -255,20 +310,23 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
                              const std::string& channel,
                              v8::Local<v8::Value> args);
 
+  void PostMessage(const std::string& channel,
+                   v8::Local<v8::Value> message,
+                   base::Optional<v8::Local<v8::Value>> transfer);
+
   // Send WebInputEvent to the page.
   void SendInputEvent(v8::Isolate* isolate, v8::Local<v8::Value> input_event);
 
   // Subscribe to the frame updates.
-  void BeginFrameSubscription(gin_helper::Arguments* args);
+  void BeginFrameSubscription(gin::Arguments* args);
   void EndFrameSubscription();
 
   // Dragging native items.
-  void StartDrag(const gin_helper::Dictionary& item,
-                 gin_helper::Arguments* args);
+  void StartDrag(const gin_helper::Dictionary& item, gin::Arguments* args);
 
   // Captures the page with |rect|, |callback| would be called when capturing is
   // done.
-  v8::Local<v8::Promise> CapturePage(gin_helper::Arguments* args);
+  v8::Local<v8::Promise> CapturePage(gin::Arguments* args);
 
   // Methods for creating <webview>.
   bool IsGuest() const;
@@ -292,13 +350,12 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   // Methods for zoom handling.
   void SetZoomLevel(double level);
   double GetZoomLevel() const;
-  void SetZoomFactor(double factor);
+  void SetZoomFactor(gin_helper::ErrorThrower thrower, double factor);
   double GetZoomFactor() const;
 
   // Callback triggered on permission response.
   void OnEnterFullscreenModeForTab(
-      content::WebContents* source,
-      const GURL& origin,
+      content::RenderFrameHost* requesting_frame,
       const blink::mojom::FullscreenOptions& options,
       bool allowed);
 
@@ -307,7 +364,7 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
                       const content::Referrer& referrer,
                       const std::string& frame_name,
                       WindowOpenDisposition disposition,
-                      const std::vector<std::string>& features,
+                      const std::string& features,
                       const scoped_refptr<network::ResourceRequestBody>& body);
 
   // Returns the preload script path of current WebContents.
@@ -318,16 +375,20 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   v8::Local<v8::Value> GetLastWebPreferences(v8::Isolate* isolate) const;
 
   // Returns the owner window.
-  v8::Local<v8::Value> GetOwnerBrowserWindow() const;
+  v8::Local<v8::Value> GetOwnerBrowserWindow(v8::Isolate* isolate) const;
 
   // Grants the child process the capability to access URLs with the origin of
   // the specified URL.
   void GrantOriginAccess(const GURL& url);
 
-  v8::Local<v8::Promise> TakeHeapSnapshot(const base::FilePath& file_path);
+  // Notifies the web page that there is user interaction.
+  void NotifyUserActivation();
+
+  v8::Local<v8::Promise> TakeHeapSnapshot(v8::Isolate* isolate,
+                                          const base::FilePath& file_path);
 
   // Properties.
-  int32_t ID() const;
+  int32_t ID() const { return id_; }
   v8::Local<v8::Value> Session(v8::Isolate* isolate);
   content::WebContents* HostWebContents() const;
   v8::Local<v8::Value> DevToolsWebContents(v8::Isolate* isolate);
@@ -346,6 +407,25 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
 
   bool EmitNavigationEvent(const std::string& event,
                            content::NavigationHandle* navigation_handle);
+
+  // this.emit(name, new Event(sender, message), args...);
+  template <typename... Args>
+  bool EmitWithSender(base::StringPiece name,
+                      content::RenderFrameHost* sender,
+                      electron::mojom::ElectronBrowser::InvokeCallback callback,
+                      Args&&... args) {
+    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+    v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+    v8::HandleScope handle_scope(isolate);
+    v8::Local<v8::Object> wrapper;
+    if (!GetWrapper(isolate).ToLocal(&wrapper))
+      return false;
+    v8::Local<v8::Object> event = gin_helper::internal::CreateNativeEvent(
+        isolate, wrapper, sender, std::move(callback));
+    return EmitCustomEvent(name, event, std::forward<Args>(args)...);
+  }
+
+  void MarkDestroyed();
 
   WebContents* embedder() { return embedder_; }
 
@@ -378,14 +458,30 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
-  void WebContentsCreated(content::WebContents* source_contents,
-                          int opener_render_process_id,
-                          int opener_render_frame_id,
-                          const std::string& frame_name,
-                          const GURL& target_url,
-                          content::WebContents* new_contents) override;
+  bool IsWebContentsCreationOverridden(
+      content::SiteInstance* source_site_instance,
+      content::mojom::WindowContainerType window_container_type,
+      const GURL& opener_url,
+      const std::string& frame_name,
+      const GURL& target_url) override;
+  content::WebContents* CreateCustomWebContents(
+      content::RenderFrameHost* opener,
+      content::SiteInstance* source_site_instance,
+      bool is_new_browsing_instance,
+      const GURL& opener_url,
+      const std::string& frame_name,
+      const GURL& target_url,
+      const std::string& partition_id,
+      content::SessionStorageNamespace* session_storage_namespace) override;
+  void WebContentsCreatedWithFullParams(
+      content::WebContents* source_contents,
+      int opener_render_process_id,
+      int opener_render_frame_id,
+      const content::mojom::CreateNewWindowParams& params,
+      content::WebContents* new_contents) override;
   void AddNewContents(content::WebContents* source,
                       std::unique_ptr<content::WebContents> new_contents,
+                      const GURL& target_url,
                       WindowOpenDisposition disposition,
                       const gfx::Rect& initial_rect,
                       bool user_gesture,
@@ -409,8 +505,7 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
       const content::NativeWebKeyboardEvent& event) override;
   void ContentsZoomChange(bool zoom_in) override;
   void EnterFullscreenModeForTab(
-      content::WebContents* source,
-      const GURL& origin,
+      content::RenderFrameHost* requesting_frame,
       const blink::mojom::FullscreenOptions& options) override;
   void ExitFullscreenModeForTab(content::WebContents* source) override;
   void RendererUnresponsive(
@@ -476,7 +571,8 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
       const content::LoadCommittedDetails& load_details) override;
   void TitleWasSet(content::NavigationEntry* entry) override;
   void DidUpdateFaviconURL(
-      const std::vector<content::FaviconURL>& urls) override;
+      content::RenderFrameHost* render_frame_host,
+      const std::vector<blink::mojom::FaviconURLPtr>& urls) override;
   void PluginCrashed(const base::FilePath& plugin_path,
                      base::ProcessId plugin_pid) override;
   void MediaStartedPlaying(const MediaPlayerInfo& video_type,
@@ -490,6 +586,7 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
       content::RenderFrameHost* render_frame_host,
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle* interface_pipe) override;
+  void OnCursorChanged(const content::WebCursor& cursor) override;
   void DidAcquireFullscreen(content::RenderFrameHost* rfh) override;
 
   // InspectableWebContentsDelegate:
@@ -505,8 +602,9 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
 
   // Binds the given request for the ElectronBrowser API. When the
   // RenderFrameHost is destroyed, all related bindings will be removed.
-  void BindElectronBrowser(mojom::ElectronBrowserRequest request,
-                           content::RenderFrameHost* render_frame_host);
+  void BindElectronBrowser(
+      mojo::PendingReceiver<mojom::ElectronBrowser> receiver,
+      content::RenderFrameHost* render_frame_host);
   void OnElectronBrowserConnectionError();
 
   uint32_t GetNextRequestId() { return ++request_id_; }
@@ -524,6 +622,8 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
               const std::string& channel,
               blink::CloneableMessage arguments,
               InvokeCallback callback) override;
+  void ReceivePostMessage(const std::string& channel,
+                          blink::TransferableMessage message) override;
   void MessageSync(bool internal,
                    const std::string& channel,
                    blink::CloneableMessage arguments,
@@ -535,18 +635,10 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
                  blink::CloneableMessage arguments) override;
   void MessageHost(const std::string& channel,
                    blink::CloneableMessage arguments) override;
-#if BUILDFLAG(ENABLE_REMOTE_MODULE)
-  void DereferenceRemoteJSObject(const std::string& context_id,
-                                 int object_id,
-                                 int ref_count) override;
-#endif
   void UpdateDraggableRegions(
       std::vector<mojom::DraggableRegionPtr> regions) override;
   void SetTemporaryZoomLevel(double level) override;
   void DoGetZoomLevel(DoGetZoomLevelCallback callback) override;
-
-  // Called when we receive a CursorChange message from chromium.
-  void OnCursorChange(const content::WebCursor& cursor);
 
   // Called when received a synchronous message from renderer to
   // get the zoom level.
@@ -577,6 +669,8 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   // The type of current WebContents.
   Type type_ = Type::BROWSER_WINDOW;
 
+  int32_t id_;
+
   // Request id used for findInPage request.
   uint32_t request_id_ = 0;
 
@@ -594,9 +688,10 @@ class WebContents : public gin_helper::TrackableObject<WebContents>,
   int currently_committed_process_id_ = -1;
 
   service_manager::BinderRegistryWithArgs<content::RenderFrameHost*> registry_;
-  mojo::BindingSet<mojom::ElectronBrowser, content::RenderFrameHost*> bindings_;
-  std::map<content::RenderFrameHost*, std::vector<mojo::BindingId>>
-      frame_to_bindings_map_;
+  mojo::ReceiverSet<mojom::ElectronBrowser, content::RenderFrameHost*>
+      receivers_;
+  std::map<content::RenderFrameHost*, std::vector<mojo::ReceiverId>>
+      frame_to_receivers_map_;
 
   base::WeakPtrFactory<WebContents> weak_factory_;
 

@@ -9,8 +9,8 @@
 #include <utility>
 
 #include "base/strings/utf_string_conversions.h"
+#include "shell/browser/ui/inspectable_web_contents.h"
 #include "shell/browser/ui/inspectable_web_contents_delegate.h"
-#include "shell/browser/ui/inspectable_web_contents_impl.h"
 #include "shell/browser/ui/inspectable_web_contents_view_delegate.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/webview/webview.h"
@@ -49,7 +49,8 @@ class DevToolsWindowDelegate : public views::ClientView,
   base::string16 GetWindowTitle() const override { return shell_->GetTitle(); }
   gfx::ImageSkia GetWindowAppIcon() override { return GetWindowIcon(); }
   gfx::ImageSkia GetWindowIcon() override { return icon_; }
-  const views::Widget* GetWidgetImpl() const override { return widget_; }
+  views::Widget* GetWidget() override { return widget_; }
+  const views::Widget* GetWidget() const override { return widget_; }
   views::View* GetContentsView() override { return view_; }
   views::ClientView* CreateClientView(views::Widget* widget) override {
     return this;
@@ -73,12 +74,12 @@ class DevToolsWindowDelegate : public views::ClientView,
 }  // namespace
 
 InspectableWebContentsView* CreateInspectableContentsView(
-    InspectableWebContentsImpl* inspectable_web_contents) {
+    InspectableWebContents* inspectable_web_contents) {
   return new InspectableWebContentsViewViews(inspectable_web_contents);
 }
 
 InspectableWebContentsViewViews::InspectableWebContentsViewViews(
-    InspectableWebContentsImpl* inspectable_web_contents)
+    InspectableWebContents* inspectable_web_contents)
     : inspectable_web_contents_(inspectable_web_contents),
       devtools_window_web_view_(nullptr),
       contents_web_view_(nullptr),
@@ -86,8 +87,6 @@ InspectableWebContentsViewViews::InspectableWebContentsViewViews(
       devtools_visible_(false),
       devtools_window_delegate_(nullptr),
       title_(base::ASCIIToUTF16("Developer Tools")) {
-  set_owned_by_client();
-
   if (!inspectable_web_contents_->IsGuest() &&
       inspectable_web_contents_->GetWebContents()->GetNativeView()) {
     views::WebView* contents_web_view = new views::WebView(nullptr);

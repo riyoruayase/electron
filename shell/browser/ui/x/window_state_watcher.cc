@@ -3,13 +3,14 @@
 // found in the LICENSE file.
 
 #include "shell/browser/ui/x/window_state_watcher.h"
-#include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_atom_cache.h"
 
 namespace electron {
 
 WindowStateWatcher::WindowStateWatcher(NativeWindowViews* window)
-    : window_(window), widget_(window->GetAcceleratedWidget()) {
+    : window_(window),
+      widget_(window->GetAcceleratedWidget()),
+      window_state_atom_(gfx::GetAtom("_NET_WM_STATE")) {
   ui::X11EventSource::GetInstance()->AddXEventObserver(this);
 }
 
@@ -17,15 +18,15 @@ WindowStateWatcher::~WindowStateWatcher() {
   ui::X11EventSource::GetInstance()->RemoveXEventObserver(this);
 }
 
-void WindowStateWatcher::WillProcessXEvent(XEvent* xev) {
-  if (IsWindowStateEvent(xev)) {
+void WindowStateWatcher::WillProcessXEvent(x11::Event* x11_event) {
+  if (IsWindowStateEvent(x11_event)) {
     was_minimized_ = window_->IsMinimized();
     was_maximized_ = window_->IsMaximized();
   }
 }
 
-void WindowStateWatcher::DidProcessXEvent(XEvent* xev) {
-  if (IsWindowStateEvent(xev)) {
+void WindowStateWatcher::DidProcessXEvent(x11::Event* x11_event) {
+  if (IsWindowStateEvent(x11_event)) {
     bool is_minimized = window_->IsMinimized();
     bool is_maximized = window_->IsMaximized();
     bool is_fullscreen = window_->IsFullscreen();
@@ -53,10 +54,11 @@ void WindowStateWatcher::DidProcessXEvent(XEvent* xev) {
   }
 }
 
-bool WindowStateWatcher::IsWindowStateEvent(XEvent* xev) {
-  ::Atom changed_atom = xev->xproperty.atom;
-  return (changed_atom == gfx::GetAtom("_NET_WM_STATE") &&
-          xev->type == PropertyNotify && xev->xproperty.window == widget_);
+bool WindowStateWatcher::IsWindowStateEvent(x11::Event* x11_event) const {
+  XEvent* xev = &x11_event->xlib_event();
+  return (static_cast<x11::Atom>(xev->xproperty.atom) == window_state_atom_ &&
+          xev->type == PropertyNotify &&
+          xev->xproperty.window == static_cast<uint32_t>(widget_));
 }
 
 }  // namespace electron

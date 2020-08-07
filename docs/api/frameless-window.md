@@ -15,7 +15,7 @@ To create a frameless window, you need to set `frame` to `false` in
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow({ width: 800, height: 600, frame: false })
+const win = new BrowserWindow({ width: 800, height: 600, frame: false })
 win.show()
 ```
 
@@ -33,7 +33,7 @@ Results in a hidden title bar and a full size content window, yet the title bar 
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow({ titleBarStyle: 'hidden' })
+const win = new BrowserWindow({ titleBarStyle: 'hidden' })
 win.show()
 ```
 
@@ -43,7 +43,7 @@ Results in a hidden title bar with an alternative look where the traffic light b
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow({ titleBarStyle: 'hiddenInset' })
+const win = new BrowserWindow({ titleBarStyle: 'hiddenInset' })
 win.show()
 ```
 
@@ -52,13 +52,13 @@ win.show()
 Uses custom drawn close, and miniaturize buttons that display
 when hovering in the top left of the window. The fullscreen button
 is not available due to restrictions of frameless windows as they
-interface with Apple's MacOS window masks. These custom buttons prevent
+interface with Apple's macOS window masks. These custom buttons prevent
 issues with mouse events that occur with the standard window toolbar buttons.
 This option is only applicable for frameless windows.
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow({ titleBarStyle: 'customButtonsOnHover', frame: false })
+const win = new BrowserWindow({ titleBarStyle: 'customButtonsOnHover', frame: false })
 win.show()
 ```
 
@@ -69,7 +69,7 @@ window transparent:
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow({ transparent: true, frame: false })
+const win = new BrowserWindow({ transparent: true, frame: false })
 win.show()
 ```
 
@@ -100,7 +100,7 @@ API:
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow()
+const win = new BrowserWindow()
 win.setIgnoreMouseEvents(true)
 ```
 
@@ -112,8 +112,8 @@ optional parameter can be used to forward mouse move messages to the web page,
 allowing events such as `mouseleave` to be emitted:
 
 ```javascript
-let win = require('electron').remote.getCurrentWindow()
-let el = document.getElementById('clickThroughElement')
+const win = require('electron').remote.getCurrentWindow()
+const el = document.getElementById('clickThroughElement')
 el.addEventListener('mouseenter', () => {
   win.setIgnoreMouseEvents(true, { forward: true })
 })
@@ -158,7 +158,7 @@ buttons in titlebar non-draggable.
 
 ## Text selection
 
-In a frameless window the dragging behaviour may conflict with selecting text.
+In a frameless window the dragging behavior may conflict with selecting text.
 For example, when you drag the titlebar you may accidentally select the text on
 the titlebar. To prevent this, you need to disable text selection within a
 draggable area like this:

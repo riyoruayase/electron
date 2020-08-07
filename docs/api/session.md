@@ -12,7 +12,7 @@ property of [`WebContents`](web-contents.md), or from the `session` module.
 ```javascript
 const { BrowserWindow } = require('electron')
 
-let win = new BrowserWindow({ width: 800, height: 600 })
+const win = new BrowserWindow({ width: 800, height: 600 })
 win.loadURL('http://github.com')
 
 const ses = win.webContents.session
@@ -104,6 +104,45 @@ Returns:
 
 Emitted when a render process requests preconnection to a URL, generally due to
 a [resource hint](https://w3c.github.io/resource-hints/).
+
+#### Event: 'spellcheck-dictionary-initialized'
+
+Returns:
+
+* `event` Event
+* `languageCode` String - The language code of the dictionary file
+
+Emitted when a hunspell dictionary file has been successfully initialized. This
+occurs after the file has been downloaded.
+
+#### Event: 'spellcheck-dictionary-download-begin'
+
+Returns:
+
+* `event` Event
+* `languageCode` String - The language code of the dictionary file
+
+Emitted when a hunspell dictionary file starts downloading
+
+#### Event: 'spellcheck-dictionary-download-success'
+
+Returns:
+
+* `event` Event
+* `languageCode` String - The language code of the dictionary file
+
+Emitted when a hunspell dictionary file has been successfully downloaded
+
+#### Event: 'spellcheck-dictionary-download-failure'
+
+Returns:
+
+* `event` Event
+* `languageCode` String - The language code of the dictionary file
+
+Emitted when a hunspell dictionary file download fails.  For details
+on the failure you should collect a netlog and inspect the download
+request.
 
 ### Instance Methods
 
@@ -293,7 +332,7 @@ verify proc.
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow()
+const win = new BrowserWindow()
 
 win.webContents.session.setCertificateVerifyProc((request, callback) => {
   const { hostname } = request
@@ -309,8 +348,16 @@ win.webContents.session.setCertificateVerifyProc((request, callback) => {
 
 * `handler` Function | null
   * `webContents` [WebContents](web-contents.md) - WebContents requesting the permission.  Please note that if the request comes from a subframe you should use `requestingUrl` to check the request origin.
-  * `permission` String - Enum of 'media', 'geolocation', 'notifications', 'midiSysex',
-    'pointerLock', 'fullscreen', 'openExternal'.
+  * `permission` String - The type of requested permission.
+    * `media` -  Request access to media devices such as camera, microphone and speakers.
+    * `mediaKeySystem` - Request access to DRM protected content.
+    * `geolocation` - Request access to user's current location.
+    * `notifications` - Request notification creation and the ability to display them in the user's system tray.
+    * `midi` - Request MIDI access in the `webmidi` API.
+    * `midiSysex` - Request the use of system exclusive messages in the `webmidi` API.
+    * `pointerLock` - Request to directly interpret mouse movements as an input method. Click [here](https://developer.mozilla.org/en-US/docs/Web/API/Pointer_Lock_API) to know more.
+    * `fullscreen` - Request for the app to enter fullscreen mode.
+    * `openExternal` - Request to open links in external applications.
   * `callback` Function
     * `permissionGranted` Boolean - Allow or deny the permission.
   * `details` Object - Some properties are only available on certain permission types.
@@ -400,6 +447,13 @@ example `"en-US,fr,de,ko,zh-CN,ja"`.
 This doesn't affect existing `WebContents`, and each `WebContents` can use
 `webContents.setUserAgent` to override the session-wide user agent.
 
+#### `ses.isPersistent()`
+
+Returns `Boolean` - Whether or not this session is a persistent one. The default
+`webContents` session of a `BrowserWindow` is persistent. When creating a session
+from a partition, session prefixed with `persist:` will be persistent, while others
+will be temporary.
+
 #### `ses.getUserAgent()`
 
 Returns `String` - The user agent for this session.
@@ -440,9 +494,7 @@ event. The [DownloadItem](download-item.md) will not have any `WebContents` asso
 the initial state will be `interrupted`. The download will start only when the
 `resume` API is called on the [DownloadItem](download-item.md).
 
-#### `ses.clearAuthCache(options)`
-
-* `options` ([RemovePassword](structures/remove-password.md) | [RemoveClientCertificate](structures/remove-client-certificate.md))
+#### `ses.clearAuthCache()`
 
 Returns `Promise<void>` - resolves when the session’s HTTP authentication cache has been cleared.
 
@@ -483,7 +535,12 @@ setting with the current OS locale.  This setting is persisted across restarts.
 By default Electron will download hunspell dictionaries from the Chromium CDN.  If you want to override this
 behavior you can use this API to point the dictionary downloader at your own hosted version of the hunspell
 dictionaries.  We publish a `hunspell_dictionaries.zip` file with each release which contains the files you need
-to host here.
+to host here, the file server must be **case insensitive** you must upload each file twice, once with the case it
+has in the ZIP file and once with the filename as all lower case.
+
+If the files present in `hunspell_dictionaries.zip` are available at `https://example.com/dictionaries/language-code.bdic`
+then you should call this api with `ses.setSpellCheckerDictionaryDownloadURL('https://example.com/dictionaries/')`.  Please
+note the trailing slash.  The URL to the dictionaries is formed as `${url}${filename}`.
 
 **Note:** On macOS the OS spellchecker is used and therefore we do not download any dictionary files.  This API is a no-op on macOS.
 
@@ -496,7 +553,8 @@ Resolves when the full dictionary is loaded from disk.
 
 * `word` String - The word you want to add to the dictionary
 
-Returns `Boolean` - Whether the word was successfully written to the custom dictionary.
+Returns `Boolean` - Whether the word was successfully written to the custom dictionary. This API
+will not work on non-persistent (in-memory) sessions.
 
 **Note:** On macOS and Windows 10 this word will be written to the OS custom dictionary as well
 
@@ -504,7 +562,8 @@ Returns `Boolean` - Whether the word was successfully written to the custom dict
 
 * `word` String - The word you want to remove from the dictionary
 
-Returns `Boolean` - Whether the word was successfully removed from the custom dictionary.
+Returns `Boolean` - Whether the word was successfully removed from the custom dictionary. This API
+will not work on non-persistent (in-memory) sessions.
 
 **Note:** On macOS and Windows 10 this word will be removed from the OS custom dictionary as well
 
@@ -585,6 +644,10 @@ code to the `setSpellCheckerLanaguages` API that isn't in this array will result
 
 A [`Cookies`](cookies.md) object for this session.
 
+#### `ses.serviceWorkers` _Readonly_
+
+A [`ServiceWorkers`](service-workers.md) object for this session.
+
 #### `ses.webRequest` _Readonly_
 
 A [`WebRequest`](web-request.md) object for this session.
@@ -600,7 +663,7 @@ const path = require('path')
 app.whenReady().then(() => {
   const protocol = session.fromPartition('some-partition').protocol
   protocol.registerFileProtocol('atom', (request, callback) => {
-    let url = request.url.substr(7)
+    const url = request.url.substr(7)
     callback({ path: path.normalize(`${__dirname}/${url}`) })
   }, (error) => {
     if (error) console.error('Failed to register protocol')

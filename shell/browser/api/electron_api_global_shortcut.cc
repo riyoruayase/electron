@@ -9,11 +9,11 @@
 
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "gin/dictionary.h"
+#include "gin/object_template_builder.h"
 #include "shell/browser/api/electron_api_system_preferences.h"
 #include "shell/common/gin_converters/accelerator_converter.h"
 #include "shell/common/gin_converters/callback_converter.h"
-#include "shell/common/gin_helper/dictionary.h"
-#include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
 
 #if defined(OS_MACOSX)
@@ -29,7 +29,9 @@ bool RegisteringMediaKeyForUntrustedClient(const ui::Accelerator& accelerator) {
   if (base::mac::IsAtLeastOS10_14()) {
     constexpr ui::KeyboardCode mediaKeys[] = {
         ui::VKEY_MEDIA_PLAY_PAUSE, ui::VKEY_MEDIA_NEXT_TRACK,
-        ui::VKEY_MEDIA_PREV_TRACK, ui::VKEY_MEDIA_STOP};
+        ui::VKEY_MEDIA_PREV_TRACK, ui::VKEY_MEDIA_STOP,
+        ui::VKEY_VOLUME_UP,        ui::VKEY_VOLUME_DOWN,
+        ui::VKEY_VOLUME_MUTE};
 
     if (std::find(std::begin(mediaKeys), std::end(mediaKeys),
                   accelerator.key_code()) != std::end(mediaKeys)) {
@@ -49,9 +51,9 @@ namespace electron {
 
 namespace api {
 
-GlobalShortcut::GlobalShortcut(v8::Isolate* isolate) {
-  Init(isolate);
-}
+gin::WrapperInfo GlobalShortcut::kWrapperInfo = {gin::kEmbedderNativeGin};
+
+GlobalShortcut::GlobalShortcut(v8::Isolate* isolate) {}
 
 GlobalShortcut::~GlobalShortcut() {
   UnregisterAll();
@@ -60,7 +62,7 @@ GlobalShortcut::~GlobalShortcut() {
 void GlobalShortcut::OnKeyPressed(const ui::Accelerator& accelerator) {
   if (accelerator_callback_map_.find(accelerator) ==
       accelerator_callback_map_.end()) {
-    // This should never occur, because if it does, GlobalGlobalShortcutListener
+    // This should never occur, because if it does, GlobalShortcutListener
     // notifies us with wrong accelerator.
     NOTREACHED();
     return;
@@ -131,15 +133,18 @@ gin::Handle<GlobalShortcut> GlobalShortcut::Create(v8::Isolate* isolate) {
 }
 
 // static
-void GlobalShortcut::BuildPrototype(v8::Isolate* isolate,
-                                    v8::Local<v8::FunctionTemplate> prototype) {
-  prototype->SetClassName(gin::StringToV8(isolate, "GlobalShortcut"));
-  gin_helper::ObjectTemplateBuilder(isolate, prototype->PrototypeTemplate())
+gin::ObjectTemplateBuilder GlobalShortcut::GetObjectTemplateBuilder(
+    v8::Isolate* isolate) {
+  return gin::Wrappable<GlobalShortcut>::GetObjectTemplateBuilder(isolate)
       .SetMethod("registerAll", &GlobalShortcut::RegisterAll)
       .SetMethod("register", &GlobalShortcut::Register)
       .SetMethod("isRegistered", &GlobalShortcut::IsRegistered)
       .SetMethod("unregister", &GlobalShortcut::Unregister)
       .SetMethod("unregisterAll", &GlobalShortcut::UnregisterAll);
+}
+
+const char* GlobalShortcut::GetTypeName() {
+  return "GlobalShortcut";
 }
 
 }  // namespace api
@@ -153,10 +158,10 @@ void Initialize(v8::Local<v8::Object> exports,
                 v8::Local<v8::Context> context,
                 void* priv) {
   v8::Isolate* isolate = context->GetIsolate();
-  gin_helper::Dictionary dict(isolate, exports);
+  gin::Dictionary dict(isolate, exports);
   dict.Set("globalShortcut", electron::api::GlobalShortcut::Create(isolate));
 }
 
 }  // namespace
 
-NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_global_shortcut, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(electron_browser_global_shortcut, Initialize)

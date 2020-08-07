@@ -561,8 +561,8 @@ Stops any `findInPage` request for the `webview` with the provided `action`.
   * `collate` Boolean (optional) - Whether the web page should be collated.
   * `copies` Number (optional) - The number of copies of the web page to print.
   * `pageRanges` Record<string, number> (optional) - The page range to print.
-    * `from` Number - the start page.
-    * `to` Number - the end page.
+    * `from` Number - zero-based index of the first page to print.
+    * `to` Number - zero-based index of the last page to print (inclusive).
   * `duplexMode` String (optional) - Set the duplex mode of the printed web page. Can be `simplex`, `shortEdge`, or `longEdge`.
   * `dpi` Record<string, number> (optional)
     * `horizontal` Number (optional) - The horizontal dpi.
@@ -755,9 +755,9 @@ Fired when page leaves fullscreen triggered by HTML API.
 
 Returns:
 
-* `level` Integer
-* `message` String
-* `line` Integer
+* `level` Integer - The log level, from 0 to 3. In order it matches `verbose`, `info`, `warning` and `error`.
+* `message` String - The actual console message
+* `line` Integer - The line number of the source that triggered this console message
 * `sourceId` String
 
 Fired when the guest window logs a console message.
@@ -816,7 +816,7 @@ const { shell } = require('electron')
 const webview = document.querySelector('webview')
 
 webview.addEventListener('new-window', async (e) => {
-  const protocol = require('url').parse(e.url).protocol
+  const protocol = (new URL(e.url)).protocol
   if (protocol === 'http:' || protocol === 'https:') {
     await shell.openExternal(e.url)
   }

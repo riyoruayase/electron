@@ -12,10 +12,10 @@ the [`BrowserWindow`](browser-window.md) object. An example of accessing the
 ```javascript
 const { BrowserWindow } = require('electron')
 
-let win = new BrowserWindow({ width: 800, height: 1500 })
+const win = new BrowserWindow({ width: 800, height: 1500 })
 win.loadURL('http://github.com')
 
-let contents = win.webContents
+const contents = win.webContents
 console.log(contents)
 ```
 
@@ -138,7 +138,7 @@ Emitted when page receives favicon urls.
 
 Returns:
 
-* `event` Event
+* `event` NewWindowWebContentsEvent
 * `url` String
 * `frameName` String
 * `disposition` String - Can be `default`, `foreground-tab`, `background-tab`,
@@ -150,6 +150,10 @@ Returns:
 * `referrer` [Referrer](structures/referrer.md) - The referrer that will be
   passed to the new window. May or may not result in the `Referer` header being
   sent, depending on the referrer policy.
+* `postBody` [PostBody](structures/post-body.md) (optional) - The post data that
+  will be sent to the new window, along with the appropriate headers that will
+  be set. If no post data is to be sent, the value will be `null`. Only defined
+  when the window is being created by a form that set `target=_blank`.
 
 Emitted when the page requests to open a new window for a `url`. It could be
 requested by `window.open` or an external link like `<a target='_blank'>`.
@@ -162,7 +166,7 @@ new [`BrowserWindow`](browser-window.md). If you call `event.preventDefault()` a
 instance, failing to do so may result in unexpected behavior. For example:
 
 ```javascript
-myBrowserWindow.webContents.on('new-window', (event, url, frameName, disposition, options) => {
+myBrowserWindow.webContents.on('new-window', (event, url, frameName, disposition, options, additionalFeatures, referrer, postBody) => {
   event.preventDefault()
   const win = new BrowserWindow({
     webContents: options.webContents, // use existing webContents if provided
@@ -170,7 +174,16 @@ myBrowserWindow.webContents.on('new-window', (event, url, frameName, disposition
   })
   win.once('ready-to-show', () => win.show())
   if (!options.webContents) {
-    win.loadURL(url) // existing webContents will be navigated automatically
+    const loadOptions = {
+      httpReferrer: referrer
+    }
+    if (postBody != null) {
+      const { data, contentType, boundary } = postBody
+      loadOptions.postData = postBody.data
+      loadOptions.extraHeaders = `content-type: ${contentType}; boundary=${boundary}`
+    }
+
+    win.loadURL(url, loadOptions) // existing webContents will be navigated automatically
   }
   event.newGuest = win
 })
@@ -325,7 +338,7 @@ win.webContents.on('will-prevent-unload', (event) => {
 })
 ```
 
-#### Event: 'crashed'
+#### Event: 'crashed' _Deprecated_
 
 Returns:
 
@@ -333,6 +346,29 @@ Returns:
 * `killed` Boolean
 
 Emitted when the renderer process crashes or is killed.
+
+**Deprecated:** This event is superceded by the `render-process-gone` event
+which contains more information about why the render process dissapeared. It
+isn't always because it crashed.  The `killed` boolean can be replaced by
+checking `reason === 'killed'` when you switch to that event.
+
+#### Event: 'render-process-gone'
+
+Returns:
+
+* `event` Event
+* `details` Object
+  * `reason` String - The reason the render process is gone.  Possible values:
+    * `clean-exit` - Process exited with an exit code of zero
+    * `abnormal-exit` - Process exited with a non-zero exit code
+    * `killed` - Process was sent a SIGTERM or otherwise killed externally
+    * `crashed` - Process crashed
+    * `oom` - Process ran out of memory
+    * `launch-failure` - Process never successfully launched
+    * `integrity-failure` - Windows code integrity checks failed
+
+Emitted when the renderer process unexpectedly dissapears.  This is normally
+because it was crashed or killed.
 
 #### Event: 'unresponsive'
 
@@ -366,6 +402,7 @@ Returns:
   * `key` String - Equivalent to [KeyboardEvent.key][keyboardevent].
   * `code` String - Equivalent to [KeyboardEvent.code][keyboardevent].
   * `isAutoRepeat` Boolean - Equivalent to [KeyboardEvent.repeat][keyboardevent].
+  * `isComposing` Boolean - Equivalent to [KeyboardEvent.isComposing][keyboardevent].
   * `shift` Boolean - Equivalent to [KeyboardEvent.shiftKey][keyboardevent].
   * `control` Boolean - Equivalent to [KeyboardEvent.controlKey][keyboardevent].
   * `alt` Boolean - Equivalent to [KeyboardEvent.altKey][keyboardevent].
@@ -376,12 +413,12 @@ Calling `event.preventDefault` will prevent the page `keydown`/`keyup` events
 and the menu shortcuts.
 
 To only prevent the menu shortcuts, use
-[`setIgnoreMenuShortcuts`](#contentssetignoremenushortcutsignore-experimental):
+[`setIgnoreMenuShortcuts`](#contentssetignoremenushortcutsignore):
 
 ```javascript
 const { BrowserWindow } = require('electron')
 
-let win = new BrowserWindow({ width: 800, height: 600 })
+const win = new BrowserWindow({ width: 800, height: 600 })
 
 win.webContents.on('before-input-event', (event, input) => {
   // For example, only enable application menu keyboard shortcuts when
@@ -628,7 +665,7 @@ app.whenReady().then(() => {
   win = new BrowserWindow({ width: 800, height: 600 })
   win.webContents.on('select-bluetooth-device', (event, deviceList, callback) => {
     event.preventDefault()
-    let result = deviceList.find((device) => {
+    const result = deviceList.find((device) => {
       return device.deviceName === 'test'
     })
     if (!result) {
@@ -654,7 +691,7 @@ buffer.
 ```javascript
 const { BrowserWindow } = require('electron')
 
-let win = new BrowserWindow({ webPreferences: { offscreen: true } })
+const win = new BrowserWindow({ webPreferences: { offscreen: true } })
 win.webContents.on('paint', (event, dirty, image) => {
   // updateBitmap(dirty, image.getBitmap())
 })
@@ -701,9 +738,9 @@ Emitted when a `<webview>` has been attached to this web contents.
 Returns:
 
 * `event` Event
-* `level` Integer
-* `message` String
-* `line` Integer
+* `level` Integer - The log level, from 0 to 3. In order it matches `verbose`, `info`, `warning` and `error`.
+* `message` String - The actual console message
+* `line` Integer - The line number of the source that triggered this console message
 * `sourceId` String
 
 Emitted when the associated window logs a console message.
@@ -870,11 +907,11 @@ Returns `String` - The URL of the current web page.
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow({ width: 800, height: 600 })
-win.loadURL('http://github.com')
-
-let currentURL = win.webContents.getURL()
-console.log(currentURL)
+const win = new BrowserWindow({ width: 800, height: 600 })
+win.loadURL('http://github.com').then(() => {
+  const currentURL = win.webContents.getURL()
+  console.log(currentURL)
+})
 ```
 
 #### `contents.getTitle()`
@@ -967,13 +1004,9 @@ Returns `Boolean` - Whether the renderer process has crashed.
 
 Overrides the user agent for this web page.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `contents.getUserAgent()`
 
 Returns `String` - The user agent for this web page.
-
-**[Deprecated](modernization/property-updates.md)**
 
 #### `contents.insertCSS(css[, options])`
 
@@ -1042,7 +1075,7 @@ or is rejected if the result of the code is a rejected promise.
 
 Works like `executeJavaScript` but evaluates `scripts` in an isolated context.
 
-#### `contents.setIgnoreMenuShortcuts(ignore)` _Experimental_
+#### `contents.setIgnoreMenuShortcuts(ignore)`
 
 * `ignore` Boolean
 
@@ -1054,13 +1087,9 @@ Ignore application menu shortcuts while this web contents is focused.
 
 Mute the audio on the current web page.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `contents.isAudioMuted()`
 
 Returns `Boolean` - Whether this page has been muted.
-
-**[Deprecated](modernization/property-updates.md)**
 
 #### `contents.isCurrentlyAudible()`
 
@@ -1068,18 +1097,16 @@ Returns `Boolean` - Whether audio is currently playing.
 
 #### `contents.setZoomFactor(factor)`
 
-* `factor` Number - Zoom factor.
+* `factor` Double - Zoom factor; default is 1.0.
 
 Changes the zoom factor to the specified factor. Zoom factor is
 zoom percent divided by 100, so 300% = 3.0.
 
-**[Deprecated](modernization/property-updates.md)**
+The factor must be greater than 0.0.
 
 #### `contents.getZoomFactor()`
 
 Returns `Number` - the current zoom factor.
-
-**[Deprecated](modernization/property-updates.md)**
 
 #### `contents.setZoomLevel(level)`
 
@@ -1090,13 +1117,9 @@ increment above or below represents zooming 20% larger or smaller to default
 limits of 300% and 50% of original size, respectively. The formula for this is
 `scale := 1.2 ^ level`.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `contents.getZoomLevel()`
 
 Returns `Number` - the current zoom level.
-
-**[Deprecated](modernization/property-updates.md)**
 
 #### `contents.setVisualZoomLevelLimits(minimumLevel, maximumLevel)`
 
@@ -1286,7 +1309,9 @@ Returns [`PrinterInfo[]`](structures/printer-info.md)
   `A4`, `A5`, `Legal`, `Letter`, `Tabloid` or an Object containing `height`.
 * `callback` Function (optional)
   * `success` Boolean - Indicates success of the print call.
-  * `failureReason` String - Called back if the print fails; can be `cancelled` or `failed`.
+  * `failureReason` String - Error description called back if the print fails.
+
+When a custom `pageSize` is passed, Chromium attempts to validate platform specific minumum values for `width_microns` and `height_microns`. Width and height must both be minimum 353 microns but may be higher on some operating systems.
 
 Prints window's web page. When `silent` is set to `true`, Electron will pick
 the system's default printer if `deviceName` is empty and the default settings for printing.
@@ -1296,7 +1321,14 @@ Use `page-break-before: always;` CSS style to force to print to a new page.
 Example usage:
 
 ```js
-const options = { silent: true, deviceName: 'My-Printer' }
+const options = {
+  silent: true,
+  deviceName: 'My-Printer',
+  pageRanges: {
+    from: 0,
+    to: 1
+  }
+}
 win.webContents.print(options, (success, errorType) => {
   if (!success) console.log(errorType)
 })
@@ -1311,13 +1343,12 @@ win.webContents.print(options, (success, errorType) => {
   * `landscape` Boolean (optional) - `true` for landscape, `false` for portrait.
   * `marginsType` Integer (optional) - Specifies the type of margins to use. Uses 0 for
     default margin, 1 for no margin, and 2 for minimum margin.
-    and `width` in microns.
   * `scaleFactor` Number (optional) - The scale factor of the web page. Can range from 0 to 100.
   * `pageRanges` Record<string, number> (optional) - The page range to print.
-    * `from` Number - the first page to print.
-    * `to` Number - the last page to print (inclusive).
+    * `from` Number - zero-based index of the first page to print.
+    * `to` Number - zero-based index of the last page to print (inclusive).
   * `pageSize` String | Size (optional) - Specify page size of the generated PDF. Can be `A3`,
-  `A4`, `A5`, `Legal`, `Letter`, `Tabloid` or an Object containing `height`
+  `A4`, `A5`, `Legal`, `Letter`, `Tabloid` or an Object containing `height` and `width` in microns.
   * `printBackground` Boolean (optional) - Whether to print CSS backgrounds.
   * `printSelectionOnly` Boolean (optional) - Whether to print selection only.
 
@@ -1348,19 +1379,22 @@ An example of `webContents.printToPDF`:
 ```javascript
 const { BrowserWindow } = require('electron')
 const fs = require('fs')
+const path = require('path')
+const os = require('os')
 
-let win = new BrowserWindow({ width: 800, height: 600 })
+const win = new BrowserWindow({ width: 800, height: 600 })
 win.loadURL('http://github.com')
 
 win.webContents.on('did-finish-load', () => {
   // Use default printing options
   win.webContents.printToPDF({}).then(data => {
-    fs.writeFile('/tmp/print.pdf', data, (error) => {
+    const pdfPath = path.join(os.homedir(), 'Desktop', 'temp.pdf')
+    fs.writeFile(pdfPath, data, (error) => {
       if (error) throw error
-      console.log('Write PDF successfully.')
+      console.log(`Wrote PDF successfully to ${pdfPath}`)
     })
   }).catch(error => {
-    console.log(error)
+    console.log(`Failed to write PDF to ${pdfPath}: `, error)
   })
 })
 ```
@@ -1374,7 +1408,7 @@ creation:
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow()
+const win = new BrowserWindow()
 win.webContents.on('devtools-opened', () => {
   win.webContents.addWorkSpace(__dirname)
 })
@@ -1593,6 +1627,32 @@ ipcMain.on('ping', (event) => {
 })
 ```
 
+#### `contents.postMessage(channel, message, [transfer])`
+
+* `channel` String
+* `message` any
+* `transfer` MessagePortMain[] (optional)
+
+Send a message to the renderer process, optionally transferring ownership of
+zero or more [`MessagePortMain`][] objects.
+
+The transferred `MessagePortMain` objects will be available in the renderer
+process by accessing the `ports` property of the emitted event. When they
+arrive in the renderer, they will be native DOM `MessagePort` objects.
+
+For example:
+```js
+// Main process
+const { port1, port2 } = new MessageChannelMain()
+webContents.postMessage('port', { message: 'hello' }, [port1])
+
+// Renderer process
+ipcRenderer.on('port', (e, msg) => {
+  const [port] = e.ports
+  // ...
+})
+```
+
 #### `contents.enableDeviceEmulation(parameters)`
 
 * `parameters` Object
@@ -1669,7 +1729,7 @@ Returns `Promise<void>` - resolves if the page is saved.
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow()
+const win = new BrowserWindow()
 
 win.loadURL('https://github.com')
 
@@ -1709,13 +1769,9 @@ Returns `Boolean` - If *offscreen rendering* is enabled returns whether it is cu
 If *offscreen rendering* is enabled sets the frame rate to the specified number.
 Only values between 1 and 60 are accepted.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `contents.getFrameRate()`
 
 Returns `Integer` - If *offscreen rendering* is enabled returns the current frame rate.
-
-**[Deprecated](modernization/property-updates.md)**
 
 #### `contents.invalidate()`
 
@@ -1767,6 +1823,11 @@ be compared to the `frameProcessId` passed by frame specific navigation events
 Returns `Promise<void>` - Indicates whether the snapshot has been created successfully.
 
 Takes a V8 heap snapshot and saves it to `filePath`.
+
+#### `contents.getBackgroundThrottling()`
+
+Returns `Boolean` - whether or not this WebContents will throttle animations and timers
+when the page becomes backgrounded. This also affects the Page Visibility API.
 
 #### `contents.setBackgroundThrottling(allowed)`
 
@@ -1822,7 +1883,7 @@ A [`WebContents`](web-contents.md) instance that might own this `WebContents`.
 
 #### `contents.devToolsWebContents` _Readonly_
 
-A `WebContents` of DevTools for this `WebContents`.
+A `WebContents | null` property that represents the of DevTools `WebContents` associated with a given `WebContents`.
 
 **Note:** Users should never store this object because it may become `null`
 when the DevTools has been closed.
@@ -1835,3 +1896,8 @@ A [`Debugger`](debugger.md) instance for this webContents.
 [event-emitter]: https://nodejs.org/api/events.html#events_class_eventemitter
 [SCA]: https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm
 [`postMessage`]: https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage
+
+#### `contents.backgroundThrottling`
+
+A `Boolean` property that determines whether or not this WebContents will throttle animations and timers
+when the page becomes backgrounded. This also affects the Page Visibility API.

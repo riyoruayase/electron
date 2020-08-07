@@ -29,6 +29,12 @@ class WMState;
 }
 #endif
 
+#if defined(USE_X11)
+namespace ui {
+class GtkUiDelegate;
+}
+#endif
+
 namespace electron {
 
 class ElectronBrowserContext;
@@ -51,6 +57,10 @@ class ViewsDelegate;
 
 #if defined(OS_MACOSX)
 class ViewsDelegateMac;
+#endif
+
+#if defined(USE_X11)
+class DarkThemeObserver;
 #endif
 
 class ElectronBrowserMainParts : public content::BrowserMainParts {
@@ -80,6 +90,7 @@ class ElectronBrowserMainParts : public content::BrowserMainParts {
 
   Browser* browser() { return browser_.get(); }
   BrowserProcessImpl* browser_process() { return fake_browser_process_.get(); }
+  NodeEnvironment* node_env() { return node_env_.get(); }
 
  protected:
   // content::BrowserMainParts:
@@ -121,6 +132,12 @@ class ElectronBrowserMainParts : public content::BrowserMainParts {
   std::unique_ptr<wm::WMState> wm_state_;
 #endif
 
+#if defined(USE_X11)
+  std::unique_ptr<ui::GtkUiDelegate> gtk_ui_delegate_;
+  // Used to notify the native theme of changes to dark mode.
+  std::unique_ptr<DarkThemeObserver> dark_theme_observer_;
+#endif
+
   std::unique_ptr<views::LayoutProvider> layout_provider_;
 
   // A fake BrowserProcess object that used to feed the source code from chrome.
@@ -129,8 +146,8 @@ class ElectronBrowserMainParts : public content::BrowserMainParts {
   // Pointer to exit code.
   int* exit_code_ = nullptr;
 
-  std::unique_ptr<Browser> browser_;
   std::unique_ptr<JavascriptEnvironment> js_env_;
+  std::unique_ptr<Browser> browser_;
   std::unique_ptr<NodeBindings> node_bindings_;
   std::unique_ptr<ElectronBindings> electron_bindings_;
   std::unique_ptr<NodeEnvironment> node_env_;

@@ -15,8 +15,8 @@
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/icon_manager.h"
@@ -37,7 +37,6 @@
 #include "shell/browser/browser_process_impl.h"
 #include "shell/browser/electron_browser_client.h"
 #include "shell/browser/electron_browser_context.h"
-#include "shell/browser/electron_paths.h"
 #include "shell/browser/electron_web_ui_controller_factory.h"
 #include "shell/browser/feature_list.h"
 #include "shell/browser/javascript_environment.h"
@@ -47,11 +46,11 @@
 #include "shell/common/api/electron_bindings.h"
 #include "shell/common/application_info.h"
 #include "shell/common/asar/asar_util.h"
+#include "shell/common/electron_paths.h"
 #include "shell/common/gin_helper/trackable_object.h"
 #include "shell/common/node_bindings.h"
 #include "shell/common/node_includes.h"
 #include "ui/base/idle/idle.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/ui_base_switches.h"
 
 #if defined(USE_AURA)
@@ -65,11 +64,15 @@
 #include "base/environment.h"
 #include "base/nix/xdg_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/ui/gtk/gtk_ui.h"
-#include "chrome/browser/ui/gtk/gtk_util.h"
 #include "ui/base/x/x11_util.h"
-#include "ui/base/x/x11_util_internal.h"
 #include "ui/events/devices/x11/touch_factory_x11.h"
+#include "ui/gfx/color_utils.h"
+#include "ui/gfx/x/x11_types.h"
+#include "ui/gfx/x/xproto_util.h"
+#include "ui/gtk/gtk_ui.h"
+#include "ui/gtk/gtk_ui_delegate.h"
+#include "ui/gtk/gtk_util.h"
+#include "ui/gtk/x/gtk_ui_delegate_x11.h"
 #include "ui/views/linux_ui/linux_ui.h"
 #endif
 
@@ -165,7 +168,7 @@ void OverrideLinuxAppDataPath() {
 int BrowserX11ErrorHandler(Display* d, XErrorEvent* error) {
   if (!g_in_x11_io_error_handler && base::ThreadTaskRunnerHandle::IsSet()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(&ui::LogErrorEventDescription, d, *error));
+        FROM_HERE, base::BindOnce(&x11::LogErrorEventDescription, *error));
   }
   return 0;
 }
@@ -208,9 +211,35 @@ int X11EmptyErrorHandler(Display* d, XErrorEvent* error) {
 int X11EmptyIOErrorHandler(Display* d) {
   return 0;
 }
+
+// GTK does not provide a way to check if current theme is dark, so we compare
+// the text and background luminosity to get a result.
+// This trick comes from FireFox.
+void UpdateDarkThemeSetting() {
+  float bg = color_utils::GetRelativeLuminance(gtk::GetBgColor("GtkLabel"));
+  float fg = color_utils::GetRelativeLuminance(gtk::GetFgColor("GtkLabel"));
+  bool is_dark = fg > bg;
+  // Pass it to NativeUi theme, which is used by the nativeTheme module and most
+  // places in Electron.
+  ui::NativeTheme::GetInstanceForNativeUi()->set_use_dark_colors(is_dark);
+  // Pass it to Web Theme, to make "prefers-color-scheme" media query work.
+  ui::NativeTheme::GetInstanceForWeb()->set_use_dark_colors(is_dark);
+}
 #endif
 
 }  // namespace
+
+#if defined(USE_X11)
+class DarkThemeObserver : public ui::NativeThemeObserver {
+ public:
+  DarkThemeObserver() = default;
+
+  // ui::NativeThemeObserver:
+  void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override {
+    UpdateDarkThemeSetting();
+  }
+};
+#endif
 
 // static
 ElectronBrowserMainParts* ElectronBrowserMainParts::self_ = nullptr;
@@ -221,22 +250,13 @@ ElectronBrowserMainParts::ElectronBrowserMainParts(
       browser_(new Browser),
       node_bindings_(
           NodeBindings::Create(NodeBindings::BrowserEnvironment::BROWSER)),
-      electron_bindings_(new ElectronBindings(uv_default_loop())) {
+      electron_bindings_(new ElectronBindings(node_bindings_->uv_loop())) {
   DCHECK(!self_) << "Cannot have two ElectronBrowserMainParts";
   self_ = this;
 }
 
 ElectronBrowserMainParts::~ElectronBrowserMainParts() {
   asar::ClearArchives();
-  // Leak the JavascriptEnvironment on exit.
-  // This is to work around the bug that V8 would be waiting for background
-  // tasks to finish on exit, while somehow it waits forever in Electron, more
-  // about this can be found at
-  // https://github.com/electron/electron/issues/4767. On the other handle there
-  // is actually no need to gracefully shutdown V8 on exit in the main process,
-  // we already ensured all necessary resources get cleaned up, and it would
-  // make quitting faster.
-  ignore_result(js_env_.release());
 }
 
 // static
@@ -268,7 +288,6 @@ void ElectronBrowserMainParts::RegisterDestructionCallback(
 int ElectronBrowserMainParts::PreEarlyInitialization() {
   field_trial_list_ = std::make_unique<base::FieldTrialList>(nullptr);
 #if defined(USE_X11)
-  views::LinuxUI::SetInstance(BuildGtkUi());
   OverrideLinuxAppDataPath();
 
   // Installs the X11 error handlers for the browser process used during
@@ -293,46 +312,19 @@ void ElectronBrowserMainParts::PostEarlyInitialization() {
   // avoid conflicts we only initialize our V8 environment after that.
   js_env_ = std::make_unique<JavascriptEnvironment>(node_bindings_->uv_loop());
 
+  v8::HandleScope scope(js_env_->isolate());
+
   node_bindings_->Initialize();
   // Create the global environment.
   node::Environment* env = node_bindings_->CreateEnvironment(
-      js_env_->context(), js_env_->platform(), false);
+      js_env_->context(), js_env_->platform());
   node_env_ = std::make_unique<NodeEnvironment>(env);
-
-  /**
-   * 🚨  🚨  🚨  🚨  🚨  🚨  🚨  🚨  🚨
-   * UNSAFE ENVIRONMENT BLOCK BEGINS
-   *
-   * DO NOT USE node::Environment inside this block, bad things will happen
-   * and you won't be able to figure out why.  Just don't touch it, the only
-   * thing that can use it is NodeDebugger and that is ONLY allowed to access
-   * the inspector agent.
-   *
-   * This is unsafe because the environment is not yet bootstrapped, it's a race
-   * condition where we can't bootstrap before intializing the inspector agent.
-   *
-   * Long term we should figure out how to get node to initialize the inspector
-   * agent in the correct place without us splitting the bootstrap up, but for
-   * now this works.
-   * 🚨  🚨  🚨  🚨  🚨  🚨  🚨  🚨  🚨
-   */
 
   // Enable support for v8 inspector
   node_debugger_ = std::make_unique<NodeDebugger>(env);
   node_debugger_->Start();
 
-  // Only run the node bootstrapper after we have initialized the inspector
-  // TODO(MarshallOfSound): Figured out a better way to init the inspector
-  // before bootstrapping
-  node::BootstrapEnvironment(env);
-
-  /**
-   * ✅  ✅  ✅  ✅  ✅  ✅  ✅
-   * UNSAFE ENVIRONMENT BLOCK ENDS
-   *
-   * Do whatever you want now with that env, it's safe again
-   * ✅  ✅  ✅  ✅  ✅  ✅  ✅
-   */
+  env->set_trace_sync_io(env->options()->trace_sync_io);
 
   // Add Electron extended APIs.
   electron_bindings_->BindTo(js_env_->isolate(), env->process_object());
@@ -382,6 +374,9 @@ int ElectronBrowserMainParts::PreCreateThreads() {
 
   fake_browser_process_->PreCreateThreads();
 
+  // Notify observers.
+  Browser::Get()->PreCreateThreads();
+
   return 0;
 }
 
@@ -404,10 +399,24 @@ void ElectronBrowserMainParts::PostDestroyThreads() {
 }
 
 void ElectronBrowserMainParts::ToolkitInitialized() {
-  ui::MaterialDesignController::Initialize();
+#if defined(USE_X11)
+  // In Aura/X11, Gtk-based LinuxUI implementation is used.
+  gtk_ui_delegate_ =
+      std::make_unique<ui::GtkUiDelegateX11>(x11::Connection::Get());
+  ui::GtkUiDelegate::SetInstance(gtk_ui_delegate_.get());
+  views::LinuxUI* linux_ui = BuildGtkUi(gtk_ui_delegate_.get());
+  views::LinuxUI::SetInstance(linux_ui);
+  linux_ui->Initialize();
 
-#if defined(USE_AURA) && defined(USE_X11)
-  views::LinuxUI::instance()->Initialize();
+  // Chromium does not respect GTK dark theme setting, but they may change
+  // in future and this code might be no longer needed. Check the Chromium
+  // issue to keep updated:
+  // https://bugs.chromium.org/p/chromium/issues/detail?id=998903
+  UpdateDarkThemeSetting();
+  // Update the naitve theme when GTK theme changes. The GetNativeTheme
+  // here returns a NativeThemeGtk, which monitors GTK settings.
+  dark_theme_observer_.reset(new DarkThemeObserver);
+  linux_ui->GetNativeTheme(nullptr)->AddObserver(dark_theme_observer_.get());
 #endif
 
 #if defined(USE_AURA)
@@ -435,6 +444,9 @@ void ElectronBrowserMainParts::PreMainMessageLoopRun() {
   // a chance to setup everything.
   node_bindings_->PrepareMessageLoop();
   node_bindings_->RunMessageLoop();
+
+  // url::Add*Scheme are not threadsafe, this helps prevent data races.
+  url::LockSchemeRegistries();
 
 #if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
   extensions_client_ = std::make_unique<ElectronExtensionsClient>();
@@ -465,10 +477,14 @@ void ElectronBrowserMainParts::PreMainMessageLoopRun() {
   content::WebUIControllerFactory::RegisterFactory(
       ElectronWebUIControllerFactory::GetInstance());
 
-  // --remote-debugging-port
   auto* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kRemoteDebuggingPort))
+  if (command_line->HasSwitch(switches::kRemoteDebuggingPipe)) {
+    // --remote-debugging-pipe
+    content::DevToolsAgentHost::StartRemoteDebuggingPipeHandler();
+  } else if (command_line->HasSwitch(switches::kRemoteDebuggingPort)) {
+    // --remote-debugging-port
     DevToolsManagerDelegate::StartHttpHandler();
+  }
 
 #if !defined(OS_MACOSX)
   // The corresponding call in macOS is in ElectronApplicationDelegate.
@@ -514,9 +530,6 @@ void ElectronBrowserMainParts::PostMainMessageLoopRun() {
   ui::SetX11ErrorHandlers(X11EmptyErrorHandler, X11EmptyIOErrorHandler);
 #endif
 
-  node_debugger_->Stop();
-  js_env_->OnMessageLoopDestroying();
-
 #if defined(OS_MACOSX)
   FreeAppDelegate();
 #endif
@@ -533,7 +546,15 @@ void ElectronBrowserMainParts::PostMainMessageLoopRun() {
     ++iter;
   }
 
+  // Destroy node platform after all destructors_ are executed, as they may
+  // invoke Node/V8 APIs inside them.
+  node_debugger_->Stop();
+  node_env_->env()->set_trace_sync_io(false);
+  js_env_->OnMessageLoopDestroying();
+  node_env_.reset();
+
   fake_browser_process_->PostMainMessageLoopRun();
+  content::DevToolsAgentHost::StopRemoteDebuggingPipeHandler();
 }
 
 #if !defined(OS_MACOSX)

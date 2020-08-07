@@ -20,8 +20,3 @@ angle_enable_vulkan_validation_layers = false
 dawn_enable_vulkan_validation_layers = false
 
 is_cfi = false
-
-# TODO: disabled due to crashes. re-enable.
-enable_osr = false
-
-enable_electron_extensions = true

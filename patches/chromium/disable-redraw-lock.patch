@@ -15,10 +15,10 @@ the redraw locking mechanism, which fixes these issues. The electron issue
 can be found at https://github.com/electron/electron/issues/1821
 
 diff --git a/ui/views/win/hwnd_message_handler.cc b/ui/views/win/hwnd_message_handler.cc
-index a5e45290e69648177440032da3f2f793b9c65600..4e17c9e207a540862138be576f9deb1a4c8d7b3c 100644
+index 4cfdfcc93b4da0497271fd31e01db8485b2ec7b2..e7be846616e58631ed2a89530d02930d64336b70 100644
 --- a/ui/views/win/hwnd_message_handler.cc
 +++ b/ui/views/win/hwnd_message_handler.cc
-@@ -305,6 +305,10 @@ constexpr int kSynthesizedMouseMessagesTimeDifference = 500;
+@@ -306,6 +306,10 @@ constexpr int kSynthesizedMouseMessagesTimeDifference = 500;
  
  }  // namespace
  
@@ -29,7 +29,7 @@ index a5e45290e69648177440032da3f2f793b9c65600..4e17c9e207a540862138be576f9deb1a
  // A scoping class that prevents a window from being able to redraw in response
  // to invalidations that may occur within it for the lifetime of the object.
  //
-@@ -356,6 +360,7 @@ class HWNDMessageHandler::ScopedRedrawLock {
+@@ -357,6 +361,7 @@ class HWNDMessageHandler::ScopedRedrawLock {
          cancel_unlock_(false),
          should_lock_(owner_->IsVisible() && !owner->HasChildRenderingWindow() &&
                       ::IsWindow(hwnd_) &&
@@ -49,7 +49,7 @@ index a5e45290e69648177440032da3f2f793b9c65600..4e17c9e207a540862138be576f9deb1a
  // HWNDMessageHandler, gfx::WindowImpl overrides:
  
 diff --git a/ui/views/win/hwnd_message_handler.h b/ui/views/win/hwnd_message_handler.h
-index 12f449fd097662a49a7bd4a7fce0cbd4f9cead58..0de89fe8f856143b76682c1d5455d5f990930aab 100644
+index 7118ff56f0dd1c6291e4095ce7f3d8fc723f0398..5dbaab15ee1667ed1caf0b746b8e31d1b12a7b52 100644
 --- a/ui/views/win/hwnd_message_handler.h
 +++ b/ui/views/win/hwnd_message_handler.h
 @@ -203,6 +203,8 @@ class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
@@ -62,7 +62,7 @@ index 12f449fd097662a49a7bd4a7fce0cbd4f9cead58..0de89fe8f856143b76682c1d5455d5f9
    HICON GetDefaultWindowIcon() const override;
    HICON GetSmallWindowIcon() const override;
 diff --git a/ui/views/win/hwnd_message_handler_delegate.h b/ui/views/win/hwnd_message_handler_delegate.h
-index 45c4e5b29d05ea0323596fa2c5034c2e30a68f70..e25aac69b09954fbc267309beba98ec0877fa2ac 100644
+index 98efa2b7c4033c9ce8c73f7201e68e85baf05bba..4f0897ecc675d3e366ec07df28e09698c6b6e4cf 100644
 --- a/ui/views/win/hwnd_message_handler_delegate.h
 +++ b/ui/views/win/hwnd_message_handler_delegate.h
 @@ -46,6 +46,8 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {

@@ -27,7 +27,7 @@
     <key>NSMainNibFile</key>
     <string>MainMenu</string>
     <key>NSPrincipalClass</key>
-    <string>ElectronApplication</string>
+    <string>AtomApplication</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
     <key>NSHighResolutionCapable</key>
@@ -40,5 +40,7 @@
     <string>This app needs access to the microphone</string>
     <key>NSCameraUsageDescription</key>
     <string>This app needs access to the camera</string>
+    <key>LSRequiresNativeExecution</key>
+    <true/>
   </dict>
 </plist>

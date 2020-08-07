@@ -12,16 +12,20 @@
 #include <vector>
 
 #include "base/containers/id_map.h"
+#include "base/no_destructor.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe_producer.h"
+#include "net/base/load_flags.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/chunked_data_pipe_getter.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "shell/browser/api/electron_api_session.h"
 #include "shell/browser/electron_browser_context.h"
+#include "shell/browser/javascript_environment.h"
 #include "shell/common/gin_converters/callback_converter.h"
 #include "shell/common/gin_converters/gurl_converter.h"
 #include "shell/common/gin_converters/net_converter.h"
@@ -133,8 +137,6 @@ class JSChunkedDataPipeGetter : public gin::Wrappable<JSChunkedDataPipeGetter>,
     data_producer_ = std::make_unique<mojo::DataPipeProducer>(std::move(pipe));
 
     v8::HandleScope handle_scope(isolate_);
-    v8::MicrotasksScope script_scope(isolate_,
-                                     v8::MicrotasksScope::kRunMicrotasks);
     auto maybe_wrapper = GetWrapper(isolate_);
     v8::Local<v8::Value> wrapper;
     if (!maybe_wrapper.ToLocal(&wrapper)) {
@@ -201,10 +203,10 @@ class JSChunkedDataPipeGetter : public gin::Wrappable<JSChunkedDataPipeGetter>,
   }
 
   void Finished() {
-    size_callback_.Reset();
     body_func_.Reset();
-    receiver_.reset();
     data_producer_.reset();
+    receiver_.reset();
+    size_callback_.Reset();
   }
 
   GetSizeCallback size_callback_;
@@ -245,6 +247,9 @@ base::IDMap<SimpleURLLoaderWrapper*>& GetAllRequests() {
 
 }  // namespace
 
+gin::WrapperInfo SimpleURLLoaderWrapper::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
+
 SimpleURLLoaderWrapper::SimpleURLLoaderWrapper(
     std::unique_ptr<network::ResourceRequest> request,
     network::mojom::URLLoaderFactory* url_loader_factory)
@@ -277,14 +282,14 @@ SimpleURLLoaderWrapper::SimpleURLLoaderWrapper(
 }
 
 void SimpleURLLoaderWrapper::Pin() {
-  // Prevent ourselves from being GC'd until the request is complete.
-  // Must be called after InitWithArgs(), otherwise GetWrapper() isn't
-  // initialized.
-  pinned_wrapper_.Reset(isolate(), GetWrapper());
+  // Prevent ourselves from being GC'd until the request is complete.  Must be
+  // called after gin::CreateHandle, otherwise the wrapper isn't initialized.
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  pinned_wrapper_.Reset(isolate, GetWrapper(isolate).ToLocalChecked());
 }
 
 void SimpleURLLoaderWrapper::PinBodyGetter(v8::Local<v8::Value> body_getter) {
-  pinned_chunk_pipe_getter_.Reset(isolate(), body_getter);
+  pinned_chunk_pipe_getter_.Reset(v8::Isolate::GetCurrent(), body_getter);
 }
 
 SimpleURLLoaderWrapper::~SimpleURLLoaderWrapper() {
@@ -336,25 +341,34 @@ void SimpleURLLoaderWrapper::Cancel() {
 }
 
 // static
-gin_helper::WrappableBase* SimpleURLLoaderWrapper::New(gin::Arguments* args) {
+gin::Handle<SimpleURLLoaderWrapper> SimpleURLLoaderWrapper::Create(
+    gin::Arguments* args) {
   gin_helper::Dictionary opts;
   if (!args->GetNext(&opts)) {
     args->ThrowTypeError("Expected a dictionary");
-    return nullptr;
+    return gin::Handle<SimpleURLLoaderWrapper>();
   }
   auto request = std::make_unique<network::ResourceRequest>();
+  request->force_ignore_site_for_cookies = true;
   opts.Get("method", &request->method);
   opts.Get("url", &request->url);
+  opts.Get("referrer", &request->referrer);
   std::map<std::string, std::string> extra_headers;
   if (opts.Get("extraHeaders", &extra_headers)) {
     for (const auto& it : extra_headers) {
       if (!net::HttpUtil::IsValidHeaderName(it.first) ||
           !net::HttpUtil::IsValidHeaderValue(it.second)) {
         args->ThrowTypeError("Invalid header name or value");
-        return nullptr;
+        return gin::Handle<SimpleURLLoaderWrapper>();
       }
       request->headers.SetHeader(it.first, it.second);
     }
+  }
+
+  bool use_session_cookies = false;
+  opts.Get("useSessionCookies", &use_session_cookies);
+  if (!use_session_cookies) {
+    request->load_flags |= net::LOAD_DO_NOT_SEND_COOKIES;
   }
 
   // Chromium filters headers using browser rules, while for net module we have
@@ -395,9 +409,9 @@ gin_helper::WrappableBase* SimpleURLLoaderWrapper::New(gin::Arguments* args) {
 
   auto url_loader_factory = session->browser_context()->GetURLLoaderFactory();
 
-  auto* ret =
-      new SimpleURLLoaderWrapper(std::move(request), url_loader_factory.get());
-  ret->InitWithArgs(args);
+  auto ret = gin::CreateHandle(
+      args->isolate(),
+      new SimpleURLLoaderWrapper(std::move(request), url_loader_factory.get()));
   ret->Pin();
   if (!chunk_pipe_getter.IsEmpty()) {
     ret->PinBodyGetter(chunk_pipe_getter);
@@ -408,8 +422,9 @@ gin_helper::WrappableBase* SimpleURLLoaderWrapper::New(gin::Arguments* args) {
 void SimpleURLLoaderWrapper::OnDataReceived(base::StringPiece string_piece,
                                             base::OnceClosure resume) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  v8::HandleScope handle_scope(isolate());
-  auto array_buffer = v8::ArrayBuffer::New(isolate(), string_piece.size());
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  v8::HandleScope handle_scope(isolate);
+  auto array_buffer = v8::ArrayBuffer::New(isolate, string_piece.size());
   auto backing_store = array_buffer->GetBackingStore();
   memcpy(backing_store->Data(), string_piece.data(), string_piece.size());
   Emit("data", array_buffer);
@@ -432,7 +447,9 @@ void SimpleURLLoaderWrapper::OnRetry(base::OnceClosure start_retry) {}
 void SimpleURLLoaderWrapper::OnResponseStarted(
     const GURL& final_url,
     const network::mojom::URLResponseHead& response_head) {
-  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate());
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  v8::HandleScope scope(isolate);
+  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("statusCode", response_head.headers->response_code());
   dict.Set("statusMessage", response_head.headers->GetStatusText());
   dict.Set("httpVersion", response_head.headers->GetHttpVersion());
@@ -461,12 +478,15 @@ void SimpleURLLoaderWrapper::OnDownloadProgress(uint64_t current) {
 }
 
 // static
-void SimpleURLLoaderWrapper::BuildPrototype(
-    v8::Isolate* isolate,
-    v8::Local<v8::FunctionTemplate> prototype) {
-  prototype->SetClassName(gin::StringToV8(isolate, "SimpleURLLoaderWrapper"));
-  gin_helper::ObjectTemplateBuilder(isolate, prototype->PrototypeTemplate())
+gin::ObjectTemplateBuilder SimpleURLLoaderWrapper::GetObjectTemplateBuilder(
+    v8::Isolate* isolate) {
+  return gin_helper::EventEmitterMixin<
+             SimpleURLLoaderWrapper>::GetObjectTemplateBuilder(isolate)
       .SetMethod("cancel", &SimpleURLLoaderWrapper::Cancel);
+}
+
+const char* SimpleURLLoaderWrapper::GetTypeName() {
+  return "SimpleURLLoaderWrapper";
 }
 
 }  // namespace api

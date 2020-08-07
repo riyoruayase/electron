@@ -37,7 +37,7 @@ bool IsDevToolsExtension(content::RenderFrame* render_frame) {
 ElectronRendererClient::ElectronRendererClient()
     : node_bindings_(
           NodeBindings::Create(NodeBindings::BrowserEnvironment::RENDERER)),
-      electron_bindings_(new ElectronBindings(uv_default_loop())) {}
+      electron_bindings_(new ElectronBindings(node_bindings_->uv_loop())) {}
 
 ElectronRendererClient::~ElectronRendererClient() {
   asar::ClearArchives();
@@ -125,7 +125,7 @@ void ElectronRendererClient::DidCreateScriptContext(
   CHECK(initialized);
 
   node::Environment* env =
-      node_bindings_->CreateEnvironment(renderer_context, nullptr, true);
+      node_bindings_->CreateEnvironment(renderer_context, nullptr);
 
   // If we have disabled the site instance overrides we should prevent loading
   // any non-context aware native module
@@ -178,6 +178,7 @@ void ElectronRendererClient::WillReleaseScriptContext(
   if (command_line->HasSwitch(switches::kNodeIntegrationInSubFrames) ||
       command_line->HasSwitch(
           switches::kDisableElectronSiteInstanceOverrides)) {
+    node::RunAtExit(env);
     node::FreeEnvironment(env);
     if (env == node_bindings_->uv_env())
       node::FreeIsolateData(node_bindings_->isolate_data());
@@ -199,11 +200,11 @@ bool ElectronRendererClient::ShouldFork(blink::WebLocalFrame* frame,
   return http_method == "GET";
 }
 
-void ElectronRendererClient::DidInitializeWorkerContextOnWorkerThread(
+void ElectronRendererClient::WorkerScriptReadyForEvaluationOnWorkerThread(
     v8::Local<v8::Context> context) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kNodeIntegrationInWorker)) {
-    WebWorkerObserver::GetCurrent()->ContextCreated(context);
+    WebWorkerObserver::GetCurrent()->WorkerScriptReadyForEvaluation(context);
   }
 }
 
@@ -218,6 +219,9 @@ void ElectronRendererClient::WillDestroyWorkerContextOnWorkerThread(
 void ElectronRendererClient::SetupMainWorldOverrides(
     v8::Handle<v8::Context> context,
     content::RenderFrame* render_frame) {
+  // We only need to run the isolated bundle if webview is enabled
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kWebviewTag))
+    return;
   // Setup window overrides in the main world context
   // Wrap the bundle into a function that receives the isolatedWorld as
   // an argument.

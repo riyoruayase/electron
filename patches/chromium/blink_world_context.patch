@@ -7,24 +7,23 @@ This exposes a method for obtaining a reference to an isolated world, which is
 otherwise not available in the Blink API.
 
 diff --git a/third_party/blink/public/web/web_local_frame.h b/third_party/blink/public/web/web_local_frame.h
-index 6f52b7e81585ad04ed8c14331aa07654354de386..812e555b9df7d39977798997f7517b1eb0467393 100644
+index c050c98f673cbf98964f14075d64748ec64ae4e7..7aea95528d3ac342b62b21382f1e53e8b0b00163 100644
 --- a/third_party/blink/public/web/web_local_frame.h
 +++ b/third_party/blink/public/web/web_local_frame.h
-@@ -333,6 +333,9 @@ class WebLocalFrame : public WebFrame {
-   // be calling this API.
-   virtual v8::Local<v8::Context> MainWorldScriptContext() const = 0;
- 
+@@ -348,6 +348,8 @@ class WebLocalFrame : public WebFrame {
+   // Returns the world ID associated with |script_context|.
+   virtual int32_t GetScriptContextWorldId(
+       v8::Local<v8::Context> script_context) const = 0;
 +  virtual v8::Local<v8::Context> WorldScriptContext(
 +      v8::Isolate* isolate, int world_id) const = 0;
-+
+ 
    // Executes script in the context of the current page and returns the value
    // that the script evaluated to with callback. Script execution can be
-   // suspend.
 diff --git a/third_party/blink/renderer/core/frame/web_local_frame_impl.cc b/third_party/blink/renderer/core/frame/web_local_frame_impl.cc
-index e3dc69f4df92cc731c93373fa2579a3eb58ae2bc..be9626f3c594aef8fa9b9fa09b7e65716afcd5fd 100644
+index 0863431d7e9cde2cdd178d02677e0d721437dce5..79bce62ad35f086cdef758eac5f0b07cd8764209 100644
 --- a/third_party/blink/renderer/core/frame/web_local_frame_impl.cc
 +++ b/third_party/blink/renderer/core/frame/web_local_frame_impl.cc
-@@ -943,6 +943,13 @@ v8::Local<v8::Object> WebLocalFrameImpl::GlobalProxy() const {
+@@ -942,6 +942,13 @@ v8::Local<v8::Object> WebLocalFrameImpl::GlobalProxy() const {
    return MainWorldScriptContext()->Global();
  }
  
@@ -39,13 +38,13 @@ index e3dc69f4df92cc731c93373fa2579a3eb58ae2bc..be9626f3c594aef8fa9b9fa09b7e6571
    return BindingSecurity::ShouldAllowAccessToFrame(
        CurrentDOMWindow(V8PerIsolateData::MainThreadIsolate()),
 diff --git a/third_party/blink/renderer/core/frame/web_local_frame_impl.h b/third_party/blink/renderer/core/frame/web_local_frame_impl.h
-index 26184ae197e935335420bb85f639f3cf1c8f8020..ff05a80f48533b3c1ec4f934bc4788663f9fef09 100644
+index a34fe16b62f51dbd6bae266504dbb3ff7eb0075f..d1150daf6d15f94bf83a0791a1f357dc434058a8 100644
 --- a/third_party/blink/renderer/core/frame/web_local_frame_impl.h
 +++ b/third_party/blink/renderer/core/frame/web_local_frame_impl.h
-@@ -165,6 +165,8 @@ class CORE_EXPORT WebLocalFrameImpl final
-       int argc,
-       v8::Local<v8::Value> argv[]) override;
+@@ -162,6 +162,8 @@ class CORE_EXPORT WebLocalFrameImpl final
    v8::Local<v8::Context> MainWorldScriptContext() const override;
+   int32_t GetScriptContextWorldId(
+       v8::Local<v8::Context> script_context) const override;
 +  v8::Local<v8::Context> WorldScriptContext(
 +      v8::Isolate* isolate, int world_id) const override;
    void RequestExecuteScriptAndReturnValue(const WebScriptSource&,

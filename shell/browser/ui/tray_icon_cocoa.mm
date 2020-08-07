@@ -7,9 +7,9 @@
 #include <string>
 #include <vector>
 
-#include "base/message_loop/message_loop_current.h"
 #include "base/message_loop/message_pump_mac.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task/current_thread.h"
 #include "base/task/post_task.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -130,27 +130,7 @@
   [statusItem_ setMenu:[menuController_ menu]];
 }
 
-- (void)mouseDown:(NSEvent*)event {
-  trayIcon_->NotifyMouseDown(
-      gfx::ScreenPointFromNSPoint([event locationInWindow]),
-      ui::EventFlagsFromModifiers([event modifierFlags]));
-
-  // Pass click to superclass to show menu. Custom mouseUp handler won't be
-  // invoked.
-  if (menuController_) {
-    [super mouseDown:event];
-  } else {
-    [[statusItem_ button] highlight:YES];
-  }
-}
-
-- (void)mouseUp:(NSEvent*)event {
-  [[statusItem_ button] highlight:NO];
-
-  trayIcon_->NotifyMouseUp(
-      gfx::ScreenPointFromNSPoint([event locationInWindow]),
-      ui::EventFlagsFromModifiers([event modifierFlags]));
-
+- (void)handleClickNotifications:(NSEvent*)event {
   // If we are ignoring double click events, we should ignore the `clickCount`
   // value and immediately emit a click event.
   BOOL shouldBeHandledAsASingleClick =
@@ -170,9 +150,34 @@
         ui::EventFlagsFromModifiers([event modifierFlags]));
 }
 
+- (void)mouseDown:(NSEvent*)event {
+  trayIcon_->NotifyMouseDown(
+      gfx::ScreenPointFromNSPoint([event locationInWindow]),
+      ui::EventFlagsFromModifiers([event modifierFlags]));
+
+  // Pass click to superclass to show menu. Custom mouseUp handler won't be
+  // invoked.
+  if (menuController_) {
+    [self handleClickNotifications:event];
+    [super mouseDown:event];
+  } else {
+    [[statusItem_ button] highlight:YES];
+  }
+}
+
+- (void)mouseUp:(NSEvent*)event {
+  [[statusItem_ button] highlight:NO];
+
+  trayIcon_->NotifyMouseUp(
+      gfx::ScreenPointFromNSPoint([event locationInWindow]),
+      ui::EventFlagsFromModifiers([event modifierFlags]));
+
+  [self handleClickNotifications:event];
+}
+
 - (void)popUpContextMenu:(electron::ElectronMenuModel*)menu_model {
   // Make sure events can be pumped while the menu is up.
-  base::MessageLoopCurrent::ScopedNestableTaskAllower allow;
+  base::CurrentThread::ScopedNestableTaskAllower allow;
 
   // Show a custom menu.
   if (menu_model) {
@@ -181,8 +186,16 @@
                                 useDefaultAccelerator:NO]);
     // Hacky way to mimic design of ordinary tray menu.
     [statusItem_ setMenu:[menuController menu]];
+    // -performClick: is a blocking call, which will run the task loop inside
+    // itself. This can potentially include running JS, which can result in
+    // this object being released. We take a temporary reference here to make
+    // sure we stay alive long enough to successfully return from this
+    // function.
+    // TODO(nornagon/codebytere): Avoid nesting task loops here.
+    [self retain];
     [[statusItem_ button] performClick:self];
     [statusItem_ setMenu:[menuController_ menu]];
+    [self release];
     return;
   }
 

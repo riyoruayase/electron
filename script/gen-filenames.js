@@ -1,17 +1,19 @@
-const cp = require('child_process')
-const fs = require('fs-extra')
-const os = require('os')
-const path = require('path')
+const cp = require('child_process');
+const fs = require('fs-extra');
+const os = require('os');
+const path = require('path');
 
-const rootPath = path.resolve(__dirname, '..')
-const gniPath = path.resolve(__dirname, '../filenames.auto.gni')
+const rootPath = path.resolve(__dirname, '..');
+const gniPath = path.resolve(__dirname, '../filenames.auto.gni');
 
 const allDocs = fs.readdirSync(path.resolve(__dirname, '../docs/api'))
   .map(doc => `docs/api/${doc}`)
   .concat(
     fs.readdirSync(path.resolve(__dirname, '../docs/api/structures'))
       .map(doc => `docs/api/structures/${doc}`)
-  )
+  );
+
+const typingFiles = fs.readdirSync(path.resolve(__dirname, '../typings')).map(child => `typings/${child}`);
 
 const main = async () => {
   const webpackTargets = [
@@ -24,10 +26,6 @@ const main = async () => {
       config: 'webpack.config.isolated_renderer.js'
     },
     {
-      name: 'content_script_bundle_deps',
-      config: 'webpack.config.content_script.js'
-    },
-    {
       name: 'browser_bundle_deps',
       config: 'webpack.config.browser.js'
     },
@@ -38,31 +36,35 @@ const main = async () => {
     {
       name: 'worker_bundle_deps',
       config: 'webpack.config.worker.js'
+    },
+    {
+      name: 'asar_bundle_deps',
+      config: 'webpack.config.asar.js'
     }
-  ]
+  ];
 
   await Promise.all(webpackTargets.map(async webpackTarget => {
-    const tmpDir = await fs.mkdtemp(path.resolve(os.tmpdir(), 'electron-filenames-'))
+    const tmpDir = await fs.mkdtemp(path.resolve(os.tmpdir(), 'electron-filenames-'));
     const child = cp.spawn('node', [
       'build/webpack/get-outputs.js',
       `./${webpackTarget.config}`,
       path.resolve(tmpDir, `${webpackTarget.name}.measure.js`)
     ], {
       cwd: path.resolve(__dirname, '..')
-    })
-    let output = ''
+    });
+    let output = '';
     child.stdout.on('data', chunk => {
-      output += chunk.toString()
-    })
-    child.stderr.on('data', chunk => console.error(chunk.toString()))
+      output += chunk.toString();
+    });
+    child.stderr.on('data', chunk => console.error(chunk.toString()));
     await new Promise((resolve, reject) => child.on('exit', (code) => {
       if (code !== 0) {
-        console.error(output)
-        return reject(new Error(`Failed to list webpack dependencies for entry: ${webpackTarget.name}`))
+        console.error(output);
+        return reject(new Error(`Failed to list webpack dependencies for entry: ${webpackTarget.name}`));
       }
 
-      resolve()
-    }))
+      resolve();
+    }));
 
     webpackTarget.dependencies = JSON.parse(output)
       // Remove whitespace
@@ -74,11 +76,11 @@ const main = async () => {
       // Only care about our own files
       .filter(line => !line.startsWith('node_modules'))
       // All webpack builds depend on the tsconfig  and package json files
-      .concat(['tsconfig.json', 'tsconfig.electron.json', 'package.json'])
+      .concat(['tsconfig.json', 'tsconfig.electron.json', 'package.json', ...typingFiles])
       // Make the generated list easier to read
-      .sort()
-    await fs.remove(tmpDir)
-  }))
+      .sort();
+    await fs.remove(tmpDir);
+  }));
 
   fs.writeFileSync(
     gniPath,
@@ -92,12 +94,12 @@ ${webpackTargets.map(target => `  ${target.name} = [
 ${target.dependencies.map(dep => `    "${dep}",`).join('\n')}
   ]`).join('\n\n')}
 }
-`)
-}
+`);
+};
 
 if (process.mainModule === module) {
   main().catch((err) => {
-    console.error(err)
-    process.exit(1)
-  })
+    console.error(err);
+    process.exit(1);
+  });
 }

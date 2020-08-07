@@ -92,7 +92,16 @@ void SetAllowedFileTypes(NSSavePanel* dialog, const Filters& filters) {
   for (const Filter& filter : filters) {
     NSMutableSet* file_type_set = [NSMutableSet set];
     [filter_names addObject:@(filter.first.c_str())];
-    for (const std::string& ext : filter.second) {
+    for (std::string ext : filter.second) {
+      // macOS is incapable of understanding multiple file extensions,
+      // so we need to tokenize the extension that's been passed in.
+      // We want to err on the side of allowing files, so we pass
+      // along only the final extension ('tar.gz' => 'gz').
+      auto pos = ext.rfind('.');
+      if (pos != std::string::npos) {
+        ext.erase(0, pos + 1);
+      }
+
       [file_type_set addObject:@(ext.c_str())];
     }
     [file_types_list addObject:[file_type_set allObjects]];
@@ -302,6 +311,7 @@ void OpenDialogCompletion(int chosen,
                           NSOpenPanel* dialog,
                           bool security_scoped_bookmarks,
                           gin_helper::Promise<gin_helper::Dictionary> promise) {
+  v8::HandleScope scope(promise.isolate());
   gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(promise.isolate());
   if (chosen == NSFileHandlingPanelCancelButton) {
     dict.Set("canceled", true);
@@ -379,6 +389,7 @@ void SaveDialogCompletion(int chosen,
                           NSSavePanel* dialog,
                           bool security_scoped_bookmarks,
                           gin_helper::Promise<gin_helper::Dictionary> promise) {
+  v8::HandleScope scope(promise.isolate());
   gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(promise.isolate());
   if (chosen == NSFileHandlingPanelCancelButton) {
     dict.Set("canceled", true);

@@ -232,6 +232,10 @@ void ElectronSandboxedRendererClient::DidCreateScriptContext(
 void ElectronSandboxedRendererClient::SetupMainWorldOverrides(
     v8::Handle<v8::Context> context,
     content::RenderFrame* render_frame) {
+  // We only need to run the isolated bundle if webview is enabled
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kWebviewTag))
+    return;
+
   // Setup window overrides in the main world context
   // Wrap the bundle into a function that receives the isolatedWorld as
   // an argument.
@@ -289,6 +293,14 @@ void ElectronSandboxedRendererClient::WillReleaseScriptContext(
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(context);
   InvokeHiddenCallback(context, kLifecycleKey, "onExit");
+}
+
+bool ElectronSandboxedRendererClient::ShouldFork(blink::WebLocalFrame* frame,
+                                                 const GURL& url,
+                                                 const std::string& http_method,
+                                                 bool is_initial_navigation,
+                                                 bool is_server_redirect) {
+  return true;
 }
 
 }  // namespace electron

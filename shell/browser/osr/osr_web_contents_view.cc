@@ -6,7 +6,7 @@
 
 #include "content/browser/web_contents/web_contents_impl.h"  // nogncheck
 #include "content/public/browser/render_view_host.h"
-#include "third_party/blink/public/platform/web_screen_info.h"
+#include "third_party/blink/public/common/widget/screen_info.h"
 #include "ui/display/screen.h"
 
 namespace electron {
@@ -33,7 +33,8 @@ void OffScreenWebContentsView::SetWebContents(
     content::WebContents* web_contents) {
   web_contents_ = web_contents;
 
-  RenderViewCreated(web_contents_->GetRenderViewHost());
+  if (GetView())
+    GetView()->InstallTransparency();
 }
 
 void OffScreenWebContentsView::SetNativeWindow(NativeWindow* window) {
@@ -85,11 +86,9 @@ gfx::NativeWindow OffScreenWebContentsView::GetTopLevelNativeWindow() const {
 }
 #endif
 
-void OffScreenWebContentsView::GetContainerBounds(gfx::Rect* out) const {
-  *out = GetViewBounds();
+gfx::Rect OffScreenWebContentsView::GetContainerBounds() const {
+  return GetViewBounds();
 }
-
-void OffScreenWebContentsView::SizeContents(const gfx::Size& size) {}
 
 void OffScreenWebContentsView::Focus() {}
 
@@ -144,13 +143,10 @@ OffScreenWebContentsView::CreateViewForChildWidget(
 
 void OffScreenWebContentsView::SetPageTitle(const base::string16& title) {}
 
-void OffScreenWebContentsView::RenderViewCreated(
-    content::RenderViewHost* host) {
+void OffScreenWebContentsView::RenderViewReady() {
   if (GetView())
     GetView()->InstallTransparency();
 }
-
-void OffScreenWebContentsView::RenderViewReady() {}
 
 void OffScreenWebContentsView::RenderViewHostChanged(
     content::RenderViewHost* old_host,
@@ -172,7 +168,8 @@ void OffScreenWebContentsView::StartDragging(
     const content::DragEventSourceInfo& event_info,
     content::RenderWidgetHostImpl* source_rwh) {
   if (web_contents_)
-    web_contents_->SystemDragEnded(source_rwh);
+    static_cast<content::WebContentsImpl*>(web_contents_)
+        ->SystemDragEnded(source_rwh);
 }
 
 void OffScreenWebContentsView::UpdateDragCursor(

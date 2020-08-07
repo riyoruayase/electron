@@ -25,6 +25,7 @@
 #include "extensions/browser/core_extensions_browser_api_provider.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_protocols.h"
+#include "extensions/browser/extensions_browser_interface_binders.h"
 #include "extensions/browser/null_app_sorting.h"
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/browser/url_request_util.h"
@@ -44,6 +45,7 @@
 #include "shell/browser/extensions/electron_extension_web_contents_observer.h"
 #include "shell/browser/extensions/electron_extensions_api_client.h"
 #include "shell/browser/extensions/electron_extensions_browser_api_provider.h"
+#include "shell/browser/extensions/electron_kiosk_delegate.h"
 #include "shell/browser/extensions/electron_navigation_ui_data.h"
 #include "shell/browser/extensions/electron_process_manager_delegate.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -345,7 +347,9 @@ ElectronExtensionsBrowserClient::GetExtensionWebContentsObserver(
 }
 
 extensions::KioskDelegate* ElectronExtensionsBrowserClient::GetKioskDelegate() {
-  return nullptr;
+  if (!kiosk_delegate_)
+    kiosk_delegate_.reset(new ElectronKioskDelegate());
+  return kiosk_delegate_.get();
 }
 
 bool ElectronExtensionsBrowserClient::IsLockScreenContext(
@@ -362,8 +366,10 @@ std::string ElectronExtensionsBrowserClient::GetUserAgent() const {
 }
 
 void ElectronExtensionsBrowserClient::RegisterBrowserInterfaceBindersForFrame(
-    service_manager::BinderMapWithContext<content::RenderFrameHost*>* map,
+    mojo::BinderMapWithContext<content::RenderFrameHost*>* map,
     content::RenderFrameHost* render_frame_host,
-    const extensions::Extension* extension) const {}
+    const extensions::Extension* extension) const {
+  PopulateExtensionFrameBinders(map, render_frame_host, extension);
+}
 
 }  // namespace electron

@@ -20,7 +20,7 @@ you prefer a graphical interface.
   tail calls, and other compiler optimizations.
 
 * **Xcode**: In addition to Xcode, also install the Xcode command line tools.
-  They include LLDB, the default debugger in Xcode on Mac OS X. It supports
+  They include LLDB, the default debugger in Xcode on macOS. It supports
   debugging C, Objective-C and C++ on the desktop and iOS devices and simulator.
 
 * **.lldbinit**: Create or edit `~/.lldbinit` to allow Chromium code to be properly source-mapped.
@@ -46,7 +46,7 @@ this basic introduction, let's assume that you're calling a command from JavaScr
 that isn't behaving correctly - so you'd like to break on that command's C++
 counterpart inside the Electron source.
 
-Relevant code files can be found in `./atom/`.
+Relevant code files can be found in `./shell/`.
 
 Let's assume that you want to debug `app.setName()`, which is defined in `browser.cc`
 as `Browser::SetName()`. Set the breakpoint using the `breakpoint` command, specifying

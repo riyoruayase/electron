@@ -6,6 +6,7 @@
 
 #include "content/public/browser/navigation_handle.h"
 #include "shell/browser/api/electron_api_web_contents.h"
+#include "shell/browser/javascript_environment.h"
 
 namespace electron {
 
@@ -28,9 +29,10 @@ ElectronNavigationThrottle::WillRedirectRequest() {
     return PROCEED;
   }
 
-  auto api_contents =
-      electron::api::WebContents::From(v8::Isolate::GetCurrent(), contents);
-  if (api_contents.IsEmpty()) {
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  v8::HandleScope scope(isolate);
+  api::WebContents* api_contents = api::WebContents::From(contents);
+  if (!api_contents) {
     // No need to emit any event if the WebContents is not available in JS.
     return PROCEED;
   }

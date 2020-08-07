@@ -10,7 +10,7 @@ THe fix for this should land in node-gyp as discussed in above issue,
 landing this as temporary patch.
 
 diff --git a/common.gypi b/common.gypi
-index f07e65f719a1a5939997dfcae7bc787ee6391f4d..f4d03a2fdfd47a4e6a71c7146d92ce7cbc44993d 100644
+index df69aecc74ef66b9501d4bed0e1311e7cda2d5b8..dfcf529cd501dc890c05425fcf9a33414a45f1a5 100644
 --- a/common.gypi
 +++ b/common.gypi
 @@ -19,7 +19,7 @@
@@ -22,9 +22,9 @@ index f07e65f719a1a5939997dfcae7bc787ee6391f4d..f4d03a2fdfd47a4e6a71c7146d92ce7c
      'node_shared_openssl%': 'false',
  
      'node_tag%': '',
-@@ -240,6 +240,26 @@
-             'cflags': [ '-fPIE' ],
-             'ldflags': [ '-fPIE', '-pie' ]
+@@ -239,6 +239,26 @@
+             'cflags': [ '-fPIC' ],
+             'ldflags': [ '-fPIC' ]
            }],
 +          ['node_with_ltcg=="true"', {
 +            'msvs_settings': {

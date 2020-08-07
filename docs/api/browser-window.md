@@ -38,7 +38,7 @@ the window after this event will have no visual flash:
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow({ show: false })
+const win = new BrowserWindow({ show: false })
 win.once('ready-to-show', () => {
   win.show()
 })
@@ -60,7 +60,7 @@ immediately, and use a `backgroundColor` close to your app's background:
 ```javascript
 const { BrowserWindow } = require('electron')
 
-let win = new BrowserWindow({ backgroundColor: '#2e2c29' })
+const win = new BrowserWindow({ backgroundColor: '#2e2c29' })
 win.loadURL('https://github.com')
 ```
 
@@ -74,8 +74,8 @@ By using `parent` option, you can create child windows:
 ```javascript
 const { BrowserWindow } = require('electron')
 
-let top = new BrowserWindow()
-let child = new BrowserWindow({ parent: top })
+const top = new BrowserWindow()
+const child = new BrowserWindow({ parent: top })
 child.show()
 top.show()
 ```
@@ -90,7 +90,7 @@ window, you have to set both `parent` and `modal` options:
 ```javascript
 const { BrowserWindow } = require('electron')
 
-let child = new BrowserWindow({ parent: top, modal: true, show: false })
+const child = new BrowserWindow({ parent: top, modal: true, show: false })
 child.loadURL('https://github.com')
 child.once('ready-to-show', () => {
   child.show()
@@ -177,7 +177,7 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
   * `simpleFullscreen` Boolean (optional) - Use pre-Lion fullscreen on macOS. Default is `false`.
   * `skipTaskbar` Boolean (optional) - Whether to show the window in taskbar. Default is
     `false`.
-  * `kiosk` Boolean (optional) - The kiosk mode. Default is `false`.
+  * `kiosk` Boolean (optional) - Whether the window is in kiosk mode. Default is `false`.
   * `title` String (optional) - Default window title. Default is `"Electron"`. If the HTML tag `<title>` is defined in the HTML file loaded by `loadURL()`, this property will be ignored.
   * `icon` ([NativeImage](native-image.md) | String) (optional) - The window icon. On Windows it is
     recommended to use `ICO` icons to get best visual effects, you can also
@@ -207,7 +207,7 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
   * `opacity` Number (optional) - Set the initial opacity of the window, between 0.0 (fully
     transparent) and 1.0 (fully opaque). This is only implemented on Windows and macOS.
   * `darkTheme` Boolean (optional) - Forces using dark theme for the window, only works on
-    some GTK+3 desktop environments. Default is `false`.
+    some GTK desktop environments. Default is [`nativeTheme.shouldUseDarkColors`](native-theme.md).
   * `transparent` Boolean (optional) - Makes the window [transparent](frameless-window.md#transparent-window).
     Default is `false`. On Windows, does not work unless the window is frameless.
   * `type` String (optional) - The type of window, default is normal window. See more about
@@ -289,7 +289,7 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
       between the web pages even when you specified different values for them,
       including but not limited to `preload`, `sandbox` and `nodeIntegration`.
       So it is suggested to use exact same `webPreferences` for web pages with
-      the same `affinity`. _This property is experimental_
+      the same `affinity`. _Deprecated_
     * `zoomFactor` Number (optional) - The default zoom factor of the page, `3.0` represents
       `300%`. Default is `1.0`.
     * `javascript` Boolean (optional) - Enables JavaScript support. Default is `true`.
@@ -348,6 +348,9 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
       You can access this context in the dev tools by selecting the
       'Electron Isolated Context' entry in the combo box at the top of the
       Console tab.
+    * `worldSafeExecuteJavaScript` Boolean (optional) - If true, values returned from `webFrame.executeJavaScript` will be sanitized to ensure JS values
+      can't unsafely cross between worlds when using `contextIsolation`.  The default
+      is `false`. In Electron 12, the default will be changed to `true`. _Deprecated_
     * `nativeWindowOpen` Boolean (optional) - Whether to use native
       `window.open()`. Defaults to `false`. Child windows will always have node
       integration disabled unless `nodeIntegrationInSubFrames` is true. **Note:** This option is currently
@@ -369,6 +372,8 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
       consecutive dialog protection is triggered. If not defined the default
       message would be used, note that currently the default message is in
       English and not localized.
+    * `disableDialogs` Boolean (optional) - Whether to disable dialogs
+      completely. Overrides `safeDialogs`. Default is `false`.
     * `navigateOnDragDrop` Boolean (optional) - Whether dragging and dropping a
       file or link onto the page causes a navigation. Default is `false`.
     * `autoplayPolicy` String (optional) - Autoplay policy to apply to
@@ -383,6 +388,15 @@ It creates a new `BrowserWindow` with native properties as set by the `options`.
       visible to users.
     * `spellcheck` Boolean (optional) - Whether to enable the builtin spellchecker.
       Default is `true`.
+    * `enableWebSQL` Boolean (optional) - Whether to enable the [WebSQL api](https://www.w3.org/TR/webdatabase/).
+      Default is `true`.
+    * `v8CacheOptions` String (optional) - Enforces the v8 code caching policy
+      used by blink. Accepted values are
+      * `none` - Disables code caching
+      * `code` - Heuristic based code caching
+      * `bypassHeatCheck` - Bypass code caching heuristics but with lazy compilation
+      * `bypassHeatCheckAndEagerCompile` - Same as above except compilation is eager.
+      Default policy is `code`.
 
 When setting minimum or maximum window size with `minWidth`/`maxWidth`/
 `minHeight`/`maxHeight`, it only constrains the users. It won't prevent you from
@@ -586,7 +600,7 @@ e.g. `APPCOMMAND_BROWSER_BACKWARD` is emitted as `browser-backward`.
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow()
+const win = new BrowserWindow()
 win.on('app-command', (e, cmd) => {
   // Navigate the window back when the user hits their mouse back button
   if (cmd === 'browser-backward' && win.webContents.canGoBack()) {
@@ -620,6 +634,12 @@ Returns:
 * `direction` String
 
 Emitted on 3-finger swipe. Possible directions are `up`, `right`, `down`, `left`.
+
+The method underlying this event is built to handle older macOS-style trackpad swiping,
+where the content on the screen doesn't move with the swipe. Most macOS trackpads are not
+configured to allow this kind of swiping anymore, so in order for it to emit properly the
+'Swipe between pages' preference in `System Preferences > Trackpad > More Gestures` must be
+set to 'Swipe with two or three fingers'.
 
 #### Event: 'rotate-gesture' _macOS_
 
@@ -675,7 +695,7 @@ Returns `BrowserWindow | null` - The window that owns the given `browserView`. I
 
 * `id` Integer
 
-Returns `BrowserWindow` - The window with the given `id`.
+Returns `BrowserWindow | null` - The window with the given `id`.
 
 #### `BrowserWindow.addExtension(path)` _Deprecated_
 
@@ -755,7 +775,7 @@ To check if a DevTools extension is installed you can run the following:
 ```javascript
 const { BrowserWindow } = require('electron')
 
-let installed = BrowserWindow.getDevToolsExtensions().hasOwnProperty('devtron')
+const installed = 'devtron' in BrowserWindow.getDevToolsExtensions()
 console.log(installed)
 ```
 
@@ -772,7 +792,7 @@ Objects created with `new BrowserWindow` have the following properties:
 ```javascript
 const { BrowserWindow } = require('electron')
 // In this example `win` is our instance
-let win = new BrowserWindow({ width: 800, height: 600 })
+const win = new BrowserWindow({ width: 800, height: 600 })
 win.loadURL('https://github.com')
 ```
 
@@ -794,6 +814,51 @@ A `Boolean` property that determines whether the window menu bar should hide its
 
 If the menu bar is already visible, setting this property to `true` won't
 hide it immediately.
+
+#### `win.simpleFullScreen`
+
+A `Boolean` property that determines whether the window is in simple (pre-Lion) fullscreen mode.
+
+#### `win.fullScreen`
+
+A `Boolean` property that determines whether the window is in fullscreen mode.
+
+#### `win.visibleOnAllWorkspaces`
+
+A `Boolean` property that determines whether the window is visible on all workspaces.
+
+**Note:** Always returns false on Windows.
+
+#### `win.shadow`
+
+A `Boolean` property that determines whether the window has a shadow.
+
+#### `win.menuBarVisible` _Windows_ _Linux_
+
+A `Boolean` property that determines whether the menu bar should be visible.
+
+**Note:** If the menu bar is auto-hide, users can still bring up the menu bar by pressing the single `Alt` key.
+
+####  `win.kiosk`
+
+A `Boolean` property that determines whether the window is in kiosk mode.
+
+#### `win.documentEdited` _macOS_
+
+A `Boolean` property that specifies whether the window’s document has been edited.
+
+The icon in title bar will become gray when set to `true`.
+
+#### `win.representedFilename` _macOS_
+
+A `String` property that determines the pathname of the file the window represents,
+and the icon of the file will show in window's title bar.
+
+#### `win.title`
+
+A `String` property that determines the title of the native window.
+
+**Note:** The title of the web page can be different from the title of the native window.
 
 #### `win.minimizable`
 
@@ -950,7 +1015,7 @@ Returns `Boolean` - Whether the window is in fullscreen mode.
 
 Enters or leaves simple fullscreen mode.
 
-Simple fullscreen mode emulates the native fullscreen behavior found in versions of Mac OS X prior to Lion (10.7).
+Simple fullscreen mode emulates the native fullscreen behavior found in versions of macOS prior to Lion (10.7).
 
 #### `win.isSimpleFullScreen()` _macOS_
 
@@ -1061,7 +1126,7 @@ Disable or enable the window.
 
 #### `win.isEnabled()`
 
-Returns Boolean - whether the window is enabled.
+Returns `Boolean` - whether the window is enabled.
 
 #### `win.setSize(width, height[, animate])`
 
@@ -1113,15 +1178,11 @@ Returns `Integer[]` - Contains the window's maximum width and height.
 
 * `resizable` Boolean
 
-Sets whether the window can be manually resized by user.
-
-**[Deprecated](modernization/property-updates.md)**
+Sets whether the window can be manually resized by the user.
 
 #### `win.isResizable()`
 
-Returns `Boolean` - Whether the window can be manually resized by user.
-
-**[Deprecated](modernization/property-updates.md)**
+Returns `Boolean` - Whether the window can be manually resized by the user.
 
 #### `win.setMovable(movable)` _macOS_ _Windows_
 
@@ -1129,41 +1190,29 @@ Returns `Boolean` - Whether the window can be manually resized by user.
 
 Sets whether the window can be moved by user. On Linux does nothing.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `win.isMovable()` _macOS_ _Windows_
 
 Returns `Boolean` - Whether the window can be moved by user.
 
 On Linux always returns `true`.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `win.setMinimizable(minimizable)` _macOS_ _Windows_
 
 * `minimizable` Boolean
 
-Sets whether the window can be manually minimized by user. On Linux does
-nothing.
-
-**[Deprecated](modernization/property-updates.md)**
+Sets whether the window can be manually minimized by user. On Linux does nothing.
 
 #### `win.isMinimizable()` _macOS_ _Windows_
 
-Returns `Boolean` - Whether the window can be manually minimized by user
+Returns `Boolean` - Whether the window can be manually minimized by the user.
 
 On Linux always returns `true`.
-
-**[Deprecated](modernization/property-updates.md)**
 
 #### `win.setMaximizable(maximizable)` _macOS_ _Windows_
 
 * `maximizable` Boolean
 
-Sets whether the window can be manually maximized by user. On Linux does
-nothing.
-
-**[Deprecated](modernization/property-updates.md)**
+Sets whether the window can be manually maximized by user. On Linux does nothing.
 
 #### `win.isMaximizable()` _macOS_ _Windows_
 
@@ -1171,23 +1220,15 @@ Returns `Boolean` - Whether the window can be manually maximized by user.
 
 On Linux always returns `true`.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `win.setFullScreenable(fullscreenable)`
 
 * `fullscreenable` Boolean
 
-Sets whether the maximize/zoom window button toggles fullscreen mode or
-maximizes the window.
-
-**[Deprecated](modernization/property-updates.md)**
+Sets whether the maximize/zoom window button toggles fullscreen mode or maximizes the window.
 
 #### `win.isFullScreenable()`
 
-Returns `Boolean` - Whether the maximize/zoom window button toggles fullscreen mode or
-maximizes the window.
-
-**[Deprecated](modernization/property-updates.md)**
+Returns `Boolean` - Whether the maximize/zoom window button toggles fullscreen mode or maximizes the window.
 
 #### `win.setClosable(closable)` _macOS_ _Windows_
 
@@ -1195,15 +1236,11 @@ maximizes the window.
 
 Sets whether the window can be manually closed by user. On Linux does nothing.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `win.isClosable()` _macOS_ _Windows_
 
 Returns `Boolean` - Whether the window can be manually closed by user.
 
 On Linux always returns `true`.
-
-**[Deprecated](modernization/property-updates.md)**
 
 #### `win.setAlwaysOnTop(flag[, level][, relativeLevel])`
 
@@ -1280,9 +1317,9 @@ a HTML-rendered toolbar. For example:
 
 ```javascript
 const { BrowserWindow } = require('electron')
-let win = new BrowserWindow()
+const win = new BrowserWindow()
 
-let toolbarRect = document.getElementById('toolbar').getBoundingClientRect()
+const toolbarRect = document.getElementById('toolbar').getBoundingClientRect()
 win.setSheetOffset(toolbarRect.height)
 ```
 
@@ -1302,7 +1339,7 @@ Makes the window not show in the taskbar.
 
 * `flag` Boolean
 
-Enters or leaves the kiosk mode.
+Enters or leaves kiosk mode.
 
 #### `win.isKiosk()`
 
@@ -1406,7 +1443,7 @@ Node's [`url.format`](https://nodejs.org/api/url.html#url_url_format_urlobject)
 method:
 
 ```javascript
-let url = require('url').format({
+const url = require('url').format({
   protocol: 'file',
   slashes: true,
   pathname: require('path').join(__dirname, 'index.html')
@@ -1616,23 +1653,17 @@ This cannot be called when `titleBarStyle` is set to `customButtonsOnHover`.
 Sets whether the window menu bar should hide itself automatically. Once set the
 menu bar will only show when users press the single `Alt` key.
 
-If the menu bar is already visible, calling `setAutoHideMenuBar(true)` won't
-hide it immediately.
-
-**[Deprecated](modernization/property-updates.md)**
+If the menu bar is already visible, calling `setAutoHideMenuBar(true)` won't hide it immediately.
 
 #### `win.isMenuBarAutoHide()`
 
 Returns `Boolean` - Whether menu bar automatically hides itself.
 
-**[Deprecated](modernization/property-updates.md)**
-
 #### `win.setMenuBarVisibility(visible)` _Windows_ _Linux_
 
 * `visible` Boolean
 
-Sets whether the menu bar should be visible. If the menu bar is auto-hide, users
-can still bring up the menu bar by pressing the single `Alt` key.
+Sets whether the menu bar should be visible. If the menu bar is auto-hide, users can still bring up the menu bar by pressing the single `Alt` key.
 
 #### `win.isMenuBarVisible()`
 
@@ -1748,7 +1779,18 @@ will remove the vibrancy effect on the window.
 Note that `appearance-based`, `light`, `dark`, `medium-light`, and `ultra-dark` have been
 deprecated and will be removed in an upcoming version of macOS.
 
-#### `win.setTouchBar(touchBar)` _macOS_ _Experimental_
+#### `win.setTrafficLightPosition(position)` _macOS_
+
+* `position` [Point](structures/point.md)
+
+Set a custom position for the traffic light buttons. Can only be used with `titleBarStyle` set to `hidden`.
+
+#### `win.getTrafficLightPosition()` _macOS_
+
+Returns `Point` - The current position for the traffic light buttons. Can only be used with `titleBarStyle`
+set to `hidden`.
+
+#### `win.setTouchBar(touchBar)` _macOS_
 
 * `touchBar` TouchBar | null
 

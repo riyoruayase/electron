@@ -8,10 +8,10 @@ this patch removes that dependency so we can reuse it.
 Ideally we would change this class in upstream to not depend on Profile.
 
 diff --git a/chrome/browser/predictors/preconnect_manager.cc b/chrome/browser/predictors/preconnect_manager.cc
-index 6f6539689a2d57d6dcedb04e23c00fb1fce482c5..03790f759a472bade4e201177d0f393ba645bfac 100644
+index d7e470bbb181b2274584ffc14f2c26625b1d5794..78216f0083281b4f1e0209f766753d0dc9c796c4 100644
 --- a/chrome/browser/predictors/preconnect_manager.cc
 +++ b/chrome/browser/predictors/preconnect_manager.cc
-@@ -69,7 +69,7 @@ PreresolveJob::PreresolveJob(PreresolveJob&& other) = default;
+@@ -68,7 +68,7 @@ PreresolveJob::PreresolveJob(PreresolveJob&& other) = default;
  PreresolveJob::~PreresolveJob() = default;
  
  PreconnectManager::PreconnectManager(base::WeakPtr<Delegate> delegate,
@@ -35,7 +35,7 @@ index 6f6539689a2d57d6dcedb04e23c00fb1fce482c5..03790f759a472bade4e201177d0f393b
    return content::BrowserContext::GetDefaultStoragePartition(profile_)
        ->GetNetworkContext();
 diff --git a/chrome/browser/predictors/preconnect_manager.h b/chrome/browser/predictors/preconnect_manager.h
-index 9c0efc9d04b9825786d22a56ab39fb80f65f59cb..d587722d4a2ff6416bab060bdc716b3051a4753b 100644
+index 1cf8e9097afbec8905849ae0b885e9103d3aa1f1..7f51a419e47ab6a52573a7f3fdba016b4edfb07e 100644
 --- a/chrome/browser/predictors/preconnect_manager.h
 +++ b/chrome/browser/predictors/preconnect_manager.h
 @@ -22,6 +22,10 @@
@@ -49,7 +49,7 @@ index 9c0efc9d04b9825786d22a56ab39fb80f65f59cb..d587722d4a2ff6416bab060bdc716b30
  namespace network {
  namespace mojom {
  class NetworkContext;
-@@ -143,7 +147,7 @@ class PreconnectManager {
+@@ -147,7 +151,7 @@ class PreconnectManager {
  
    static const size_t kMaxInflightPreresolves = 3;
  
@@ -58,7 +58,7 @@ index 9c0efc9d04b9825786d22a56ab39fb80f65f59cb..d587722d4a2ff6416bab060bdc716b30
    virtual ~PreconnectManager();
  
    // Starts preconnect and preresolve jobs keyed by |url|.
-@@ -208,7 +212,7 @@ class PreconnectManager {
+@@ -212,7 +216,7 @@ class PreconnectManager {
    network::mojom::NetworkContext* GetNetworkContext() const;
  
    base::WeakPtr<Delegate> delegate_;
@@ -66,4 +66,4 @@ index 9c0efc9d04b9825786d22a56ab39fb80f65f59cb..d587722d4a2ff6416bab060bdc716b30
 +  content::BrowserContext* const profile_;
    std::list<PreresolveJobId> queued_jobs_;
    PreresolveJobMap preresolve_jobs_;
-   std::map<std::string, std::unique_ptr<PreresolveInfo>> preresolve_info_;
+   std::map<GURL, std::unique_ptr<PreresolveInfo>> preresolve_info_;

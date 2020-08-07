@@ -194,6 +194,13 @@ class NativeWindow : public base::SupportsUserData,
   // Vibrancy API
   virtual void SetVibrancy(const std::string& type);
 
+  // Traffic Light API
+#if defined(OS_MACOSX)
+  virtual void SetTrafficLightPosition(const gfx::Point& position) = 0;
+  virtual gfx::Point GetTrafficLightPosition() const = 0;
+  virtual void RedrawTrafficLights() = 0;
+#endif
+
   // Touchbar API
   virtual void SetTouchBar(std::vector<gin_helper::PersistentDictionary> items);
   virtual void RefreshTouchBarItem(const std::string& item_id);
@@ -226,8 +233,6 @@ class NativeWindow : public base::SupportsUserData,
                            const std::string& display_name);
   virtual void CloseFilePreview();
 
-  virtual void SetGTKDarkThemeEnabled(bool use_dark_theme) = 0;
-
   // Converts between content bounds and window bounds.
   virtual gfx::Rect ContentBoundsToWindowBounds(
       const gfx::Rect& bounds) const = 0;
@@ -252,6 +257,7 @@ class NativeWindow : public base::SupportsUserData,
   void NotifyWindowBlur();
   void NotifyWindowFocus();
   void NotifyWindowShow();
+  void NotifyWindowIsKeyChanged(bool is_key);
   void NotifyWindowHide();
   void NotifyWindowMaximize();
   void NotifyWindowUnmaximize();
@@ -302,11 +308,14 @@ class NativeWindow : public base::SupportsUserData,
 
   std::list<NativeBrowserView*> browser_views() const { return browser_views_; }
 
+  int32_t window_id() const { return next_id_; }
+
  protected:
   NativeWindow(const gin_helper::Dictionary& options, NativeWindow* parent);
 
   // views::WidgetDelegate:
-  const views::Widget* GetWidgetImpl() const override;
+  views::Widget* GetWidget() override;
+  const views::Widget* GetWidget() const override;
   base::string16 GetAccessibleWindowTitle() const override;
 
   void set_content_view(views::View* view) { content_view_ = view; }
@@ -321,6 +330,8 @@ class NativeWindow : public base::SupportsUserData,
 
  private:
   std::unique_ptr<views::Widget> widget_;
+
+  static int32_t next_id_;
 
   // The content view, weak ref.
   views::View* content_view_ = nullptr;

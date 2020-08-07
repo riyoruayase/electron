@@ -32,18 +32,19 @@
 #include "media/audio/audio_manager.h"
 #include "net/ssl/client_cert_identity.h"
 #include "net/ssl/ssl_cert_request_info.h"
-#include "services/service_manager/sandbox/switches.h"
+#include "sandbox/policy/switches.h"
 #include "shell/browser/api/electron_api_menu.h"
 #include "shell/browser/api/electron_api_session.h"
 #include "shell/browser/api/electron_api_web_contents.h"
 #include "shell/browser/api/gpuinfo_manager.h"
 #include "shell/browser/electron_browser_context.h"
 #include "shell/browser/electron_browser_main_parts.h"
-#include "shell/browser/electron_paths.h"
+#include "shell/browser/javascript_environment.h"
 #include "shell/browser/login_handler.h"
 #include "shell/browser/relauncher.h"
 #include "shell/common/application_info.h"
 #include "shell/common/electron_command_line.h"
+#include "shell/common/electron_paths.h"
 #include "shell/common/gin_converters/callback_converter.h"
 #include "shell/common/gin_converters/file_path_converter.h"
 #include "shell/common/gin_converters/gurl_converter.h"
@@ -54,6 +55,7 @@
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
 #include "shell/common/options_switches.h"
+#include "shell/common/platform_util.h"
 #include "ui/gfx/image/image.h"
 
 #if defined(OS_WIN)
@@ -332,6 +334,37 @@ struct Converter<JumpListResult> {
 };
 #endif
 
+#if defined(OS_WIN)
+template <>
+struct Converter<Browser::LaunchItem> {
+  static bool FromV8(v8::Isolate* isolate,
+                     v8::Local<v8::Value> val,
+                     Browser::LaunchItem* out) {
+    gin_helper::Dictionary dict;
+    if (!ConvertFromV8(isolate, val, &dict))
+      return false;
+
+    dict.Get("name", &(out->name));
+    dict.Get("path", &(out->path));
+    dict.Get("args", &(out->args));
+    dict.Get("scope", &(out->scope));
+    dict.Get("enabled", &(out->enabled));
+    return true;
+  }
+
+  static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
+                                   Browser::LaunchItem val) {
+    gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+    dict.Set("name", val.name);
+    dict.Set("path", val.path);
+    dict.Set("args", val.args);
+    dict.Set("scope", val.scope);
+    dict.Set("enabled", val.enabled);
+    return dict.GetHandle();
+  }
+};
+#endif
+
 template <>
 struct Converter<Browser::LoginItemSettings> {
   static bool FromV8(v8::Isolate* isolate,
@@ -345,6 +378,10 @@ struct Converter<Browser::LoginItemSettings> {
     dict.Get("openAsHidden", &(out->open_as_hidden));
     dict.Get("path", &(out->path));
     dict.Get("args", &(out->args));
+#if defined(OS_WIN)
+    dict.Get("enabled", &(out->enabled));
+    dict.Get("name", &(out->name));
+#endif
     return true;
   }
 
@@ -356,6 +393,11 @@ struct Converter<Browser::LoginItemSettings> {
     dict.Set("restoreState", val.restore_state);
     dict.Set("wasOpenedAtLogin", val.opened_at_login);
     dict.Set("wasOpenedAsHidden", val.opened_as_hidden);
+#if defined(OS_WIN)
+    dict.Set("launchItems", val.launch_items);
+    dict.Set("executableWillLaunchAtLogin",
+             val.executable_will_launch_at_login);
+#endif
     return dict.GetHandle();
   }
 };
@@ -380,6 +422,8 @@ namespace electron {
 
 namespace api {
 
+gin::WrapperInfo App::kWrapperInfo = {gin::kEmbedderNativeGin};
+
 namespace {
 
 IconLoader::IconSize GetIconSizeByString(const std::string& size) {
@@ -403,6 +447,8 @@ int GetPathConstant(const std::string& name) {
     return DIR_USER_CACHE;
   else if (name == "logs")
     return DIR_APP_LOGS;
+  else if (name == "crashDumps")
+    return DIR_CRASH_DUMPS;
   else if (name == "home")
     return base::DIR_HOME;
   else if (name == "temp")
@@ -423,6 +469,10 @@ int GetPathConstant(const std::string& name) {
     return chrome::DIR_USER_PICTURES;
   else if (name == "videos")
     return chrome::DIR_USER_VIDEOS;
+#if defined(OS_WIN)
+  else if (name == "recent")
+    return electron::DIR_RECENT;
+#endif
   else if (name == "pepperFlashSystemPlugin")
     return chrome::FILE_PEPPER_FLASH_SYSTEM_PLUGIN;
   else
@@ -458,7 +508,7 @@ void OnClientCertificateSelected(
     v8::Isolate* isolate,
     std::shared_ptr<content::ClientCertificateDelegate> delegate,
     std::shared_ptr<net::ClientCertIdentityList> identities,
-    gin_helper::Arguments* args) {
+    gin::Arguments* args) {
   if (args->Length() == 2) {
     delegate->ContinueWithCertificate(nullptr, nullptr);
     return;
@@ -473,7 +523,8 @@ void OnClientCertificateSelected(
 
   gin_helper::Dictionary cert_data;
   if (!gin::ConvertFromV8(isolate, val, &cert_data)) {
-    args->ThrowError("Must pass valid certificate object.");
+    gin_helper::ErrorThrower(isolate).ThrowError(
+        "Must pass valid certificate object.");
     return;
   }
 
@@ -497,14 +548,19 @@ void OnClientCertificateSelected(
 }
 
 #if defined(USE_NSS_CERTS)
-int ImportIntoCertStore(CertificateManagerModel* model,
-                        const base::DictionaryValue& options) {
+int ImportIntoCertStore(CertificateManagerModel* model, base::Value options) {
   std::string file_data, cert_path;
   base::string16 password;
   net::ScopedCERTCertificateList imported_certs;
   int rv = -1;
-  options.GetString("certificate", &cert_path);
-  options.GetString("password", &password);
+
+  std::string* cert_path_ptr = options.FindStringKey("certificate");
+  if (cert_path_ptr)
+    cert_path = *cert_path_ptr;
+
+  std::string* pwd = options.FindStringKey("password");
+  if (pwd)
+    password = base::UTF8ToUTF16(*pwd);
 
   if (!cert_path.empty()) {
     if (base::ReadFileToString(base::FilePath(cert_path), &file_data)) {
@@ -535,18 +591,16 @@ void OnIconDataAvailable(gin_helper::Promise<gfx::Image> promise,
 
 }  // namespace
 
-App::App(v8::Isolate* isolate) {
+App::App() {
   static_cast<ElectronBrowserClient*>(ElectronBrowserClient::Get())
       ->set_delegate(this);
   Browser::Get()->AddObserver(this);
-  content::GpuDataManager::GetInstance()->AddObserver(this);
 
   base::ProcessId pid = base::GetCurrentProcId();
   auto process_metric = std::make_unique<electron::ProcessMetric>(
       content::PROCESS_TYPE_BROWSER, base::GetCurrentProcessHandle(),
       base::ProcessMetrics::CreateCurrentProcessMetrics());
   app_metrics_[pid] = std::move(process_metric);
-  Init(isolate);
 }
 
 App::~App() {
@@ -617,6 +671,21 @@ void App::OnPreMainMessageLoopRun() {
   }
 }
 
+void App::OnPreCreateThreads() {
+  DCHECK(!content::GpuDataManager::Initialized());
+  content::GpuDataManager* manager = content::GpuDataManager::GetInstance();
+  manager->AddObserver(this);
+
+  if (disable_hw_acceleration_) {
+    manager->DisableHardwareAcceleration();
+  }
+
+  if (disable_domain_blocking_for_3DAPIs_) {
+    content::GpuDataManagerImpl::GetInstance()
+        ->DisableDomainBlockingFor3DAPIsForTesting();
+  }
+}
+
 void App::OnAccessibilitySupportChanged() {
   Emit("accessibility-support-changed", IsAccessibilitySupportEnabled());
 }
@@ -658,6 +727,10 @@ void App::OnUpdateUserActivityState(bool* prevent_default,
 void App::OnNewWindowForTab() {
   Emit("new-window-for-tab");
 }
+
+void App::OnDidBecomeActive() {
+  Emit("did-become-active");
+}
 #endif
 
 bool App::CanCreateWindow(
@@ -671,21 +744,22 @@ bool App::CanCreateWindow(
     const std::string& frame_name,
     WindowOpenDisposition disposition,
     const blink::mojom::WindowFeatures& features,
-    const std::vector<std::string>& additional_features,
+    const std::string& raw_features,
     const scoped_refptr<network::ResourceRequestBody>& body,
     bool user_gesture,
     bool opener_suppressed,
     bool* no_javascript_access) {
-  v8::Locker locker(isolate());
-  v8::HandleScope handle_scope(isolate());
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  v8::Locker locker(isolate);
+  v8::HandleScope handle_scope(isolate);
   content::WebContents* web_contents =
       content::WebContents::FromRenderFrameHost(opener);
   if (web_contents) {
-    auto api_web_contents = WebContents::From(isolate(), web_contents);
+    WebContents* api_web_contents = WebContents::From(web_contents);
     // No need to emit any event if the WebContents is not available in JS.
-    if (!api_web_contents.IsEmpty()) {
+    if (api_web_contents) {
       api_web_contents->OnCreateWindow(target_url, referrer, frame_name,
-                                       disposition, additional_features, body);
+                                       disposition, raw_features, body);
     }
   }
 
@@ -701,11 +775,12 @@ void App::AllowCertificateError(
     bool strict_enforcement,
     base::OnceCallback<void(content::CertificateRequestResultType)> callback) {
   auto adapted_callback = base::AdaptCallbackForRepeating(std::move(callback));
-  v8::Locker locker(isolate());
-  v8::HandleScope handle_scope(isolate());
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  v8::Locker locker(isolate);
+  v8::HandleScope handle_scope(isolate);
   bool prevent_default =
       Emit("certificate-error",
-           WebContents::FromOrCreate(isolate(), web_contents), request_url,
+           WebContents::FromOrCreate(isolate, web_contents), request_url,
            net::ErrorToString(cert_error), ssl_info.cert, adapted_callback);
 
   // Deny the certificate by default.
@@ -730,11 +805,13 @@ base::OnceClosure App::SelectClientCertificate(
   auto shared_identities =
       std::make_shared<net::ClientCertIdentityList>(std::move(identities));
 
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  v8::HandleScope handle_scope(isolate);
   bool prevent_default =
       Emit("select-client-certificate",
-           WebContents::FromOrCreate(isolate(), web_contents),
+           WebContents::FromOrCreate(isolate, web_contents),
            cert_request_info->host_and_port.ToString(), std::move(client_certs),
-           base::BindOnce(&OnClientCertificateSelected, isolate(),
+           base::BindOnce(&OnClientCertificateSelected, isolate,
                           shared_delegate, shared_identities));
 
   // Default to first certificate from the platform store.
@@ -759,7 +836,8 @@ void App::OnGpuProcessCrashed(base::TerminationStatus status) {
 
 void App::BrowserChildProcessLaunchedAndConnected(
     const content::ChildProcessData& data) {
-  ChildProcessLaunched(data.process_type, data.GetProcess().Handle());
+  ChildProcessLaunched(data.process_type, data.GetProcess().Handle(),
+                       base::UTF16ToUTF8(data.name));
 }
 
 void App::BrowserChildProcessHostDisconnected(
@@ -771,12 +849,29 @@ void App::BrowserChildProcessCrashed(
     const content::ChildProcessData& data,
     const content::ChildProcessTerminationInfo& info) {
   ChildProcessDisconnected(base::GetProcId(data.GetProcess().Handle()));
+  BrowserChildProcessCrashedOrKilled(data, info);
 }
 
 void App::BrowserChildProcessKilled(
     const content::ChildProcessData& data,
     const content::ChildProcessTerminationInfo& info) {
   ChildProcessDisconnected(base::GetProcId(data.GetProcess().Handle()));
+  BrowserChildProcessCrashedOrKilled(data, info);
+}
+
+void App::BrowserChildProcessCrashedOrKilled(
+    const content::ChildProcessData& data,
+    const content::ChildProcessTerminationInfo& info) {
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  v8::HandleScope handle_scope(isolate);
+  auto details = gin_helper::Dictionary::CreateEmpty(isolate);
+  details.Set("type", content::GetProcessTypeNameInEnglish(data.process_type));
+  details.Set("reason", info.status);
+  details.Set("exitCode", info.exit_code);
+  if (!data.name.empty()) {
+    details.Set("name", data.name);
+  }
+  Emit("child-process-gone", details);
 }
 
 void App::RenderProcessReady(content::RenderProcessHost* host) {
@@ -788,15 +883,20 @@ void App::RenderProcessReady(content::RenderProcessHost* host) {
   // `RenderProcessPreferences`, so this is at least more explicit...
   content::WebContents* web_contents =
       ElectronBrowserClient::Get()->GetWebContentsFromProcessID(host->GetID());
-  if (web_contents)
-    WebContents::FromOrCreate(v8::Isolate::GetCurrent(), web_contents);
+  if (web_contents) {
+    v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+    v8::HandleScope scope(isolate);
+    WebContents::FromOrCreate(isolate, web_contents);
+  }
 }
 
 void App::RenderProcessDisconnected(base::ProcessId host_pid) {
   ChildProcessDisconnected(host_pid);
 }
 
-void App::ChildProcessLaunched(int process_type, base::ProcessHandle handle) {
+void App::ChildProcessLaunched(int process_type,
+                               base::ProcessHandle handle,
+                               const std::string& name) {
   auto pid = base::GetProcId(handle);
 
 #if defined(OS_MACOSX)
@@ -806,7 +906,7 @@ void App::ChildProcessLaunched(int process_type, base::ProcessHandle handle) {
   auto metrics = base::ProcessMetrics::CreateProcessMetrics(handle);
 #endif
   app_metrics_[pid] = std::make_unique<electron::ProcessMetric>(
-      process_type, handle, std::move(metrics));
+      process_type, handle, std::move(metrics), name);
 }
 
 void App::ChildProcessDisconnected(base::ProcessId pid) {
@@ -829,13 +929,19 @@ void App::SetAppLogsPath(gin_helper::ErrorThrower thrower,
       thrower.ThrowError("Path must be absolute");
       return;
     }
-    base::PathService::Override(DIR_APP_LOGS, custom_path.value());
+    {
+      base::ThreadRestrictions::ScopedAllowIO allow_io;
+      base::PathService::Override(DIR_APP_LOGS, custom_path.value());
+    }
   } else {
     base::FilePath path;
     if (base::PathService::Get(DIR_USER_DATA, &path)) {
       path = path.Append(base::FilePath::FromUTF8Unsafe(GetApplicationName()));
       path = path.Append(base::FilePath::FromUTF8Unsafe("logs"));
-      base::PathService::Override(DIR_APP_LOGS, path);
+      {
+        base::ThreadRestrictions::ScopedAllowIO allow_io;
+        base::PathService::Override(DIR_APP_LOGS, path);
+      }
     }
   }
 }
@@ -852,10 +958,18 @@ base::FilePath App::GetPath(gin_helper::ErrorThrower thrower,
     // If users try to get the logs path before setting a logs path,
     // set the path to a sensible default and then try to get it again
     if (!succeed && name == "logs") {
-      base::ThreadRestrictions::ScopedAllowIO allow_io;
       SetAppLogsPath(thrower, base::Optional<base::FilePath>());
       succeed = base::PathService::Get(key, &path);
     }
+
+#if defined(OS_WIN)
+    // If we get the "recent" path before setting it, set it
+    if (!succeed && name == "recent" &&
+        platform_util::GetFolderPath(DIR_RECENT, &path)) {
+      base::ThreadRestrictions::ScopedAllowIO allow_io;
+      succeed = base::PathService::Override(DIR_RECENT, path);
+    }
+#endif
   }
 
   if (!succeed)
@@ -880,6 +994,9 @@ void App::SetPath(gin_helper::ErrorThrower thrower,
     if (key == DIR_USER_DATA) {
       succeed |= base::PathService::OverrideAndCreateIfNeeded(
           chrome::DIR_USER_DATA, path, true, false);
+      succeed |= base::PathService::Override(
+          chrome::DIR_APP_DICTIONARIES,
+          path.Append(base::FilePath::FromUTF8Unsafe("Dictionaries")));
     }
   }
   if (!succeed)
@@ -979,7 +1096,7 @@ void App::ReleaseSingleInstanceLock() {
   }
 }
 
-bool App::Relaunch(gin_helper::Arguments* js_args) {
+bool App::Relaunch(gin::Arguments* js_args) {
   // Parse parameters.
   bool override_argv = false;
   base::FilePath exec_path;
@@ -1020,7 +1137,11 @@ void App::DisableHardwareAcceleration(gin_helper::ErrorThrower thrower) {
         "before app is ready");
     return;
   }
-  content::GpuDataManager::GetInstance()->DisableHardwareAcceleration();
+  if (content::GpuDataManager::Initialized()) {
+    content::GpuDataManager::GetInstance()->DisableHardwareAcceleration();
+  } else {
+    disable_hw_acceleration_ = true;
+  }
 }
 
 void App::DisableDomainBlockingFor3DAPIs(gin_helper::ErrorThrower thrower) {
@@ -1030,8 +1151,12 @@ void App::DisableDomainBlockingFor3DAPIs(gin_helper::ErrorThrower thrower) {
         "before app is ready");
     return;
   }
-  content::GpuDataManagerImpl::GetInstance()
-      ->DisableDomainBlockingFor3DAPIsForTesting();
+  if (content::GpuDataManager::Initialized()) {
+    content::GpuDataManagerImpl::GetInstance()
+        ->DisableDomainBlockingFor3DAPIsForTesting();
+  } else {
+    disable_domain_blocking_for_3DAPIs_ = true;
+  }
 }
 
 bool App::IsAccessibilitySupportEnabled() {
@@ -1057,39 +1182,43 @@ void App::SetAccessibilitySupportEnabled(gin_helper::ErrorThrower thrower,
   Browser::Get()->OnAccessibilitySupportChanged();
 }
 
-Browser::LoginItemSettings App::GetLoginItemSettings(
-    gin_helper::Arguments* args) {
+Browser::LoginItemSettings App::GetLoginItemSettings(gin::Arguments* args) {
   Browser::LoginItemSettings options;
   args->GetNext(&options);
   return Browser::Get()->GetLoginItemSettings(options);
 }
 
 #if defined(USE_NSS_CERTS)
-void App::ImportCertificate(const base::DictionaryValue& options,
-                            net::CompletionRepeatingCallback callback) {
-  auto browser_context = ElectronBrowserContext::From("", false);
-  if (!certificate_manager_model_) {
-    auto copy = base::DictionaryValue::From(
-        base::Value::ToUniquePtrValue(options.Clone()));
-    CertificateManagerModel::Create(
-        browser_context.get(),
-        base::BindRepeating(&App::OnCertificateManagerModelCreated,
-                            base::Unretained(this), base::Passed(&copy),
-                            callback));
+void App::ImportCertificate(gin_helper::ErrorThrower thrower,
+                            base::Value options,
+                            net::CompletionOnceCallback callback) {
+  if (!options.is_dict()) {
+    thrower.ThrowTypeError("Expected options to be an object");
     return;
   }
 
-  int rv = ImportIntoCertStore(certificate_manager_model_.get(), options);
+  auto browser_context = ElectronBrowserContext::From("", false);
+  if (!certificate_manager_model_) {
+    CertificateManagerModel::Create(
+        browser_context.get(),
+        base::BindOnce(&App::OnCertificateManagerModelCreated,
+                       base::Unretained(this), std::move(options),
+                       std::move(callback)));
+    return;
+  }
+
+  int rv =
+      ImportIntoCertStore(certificate_manager_model_.get(), std::move(options));
   std::move(callback).Run(rv);
 }
 
 void App::OnCertificateManagerModelCreated(
-    std::unique_ptr<base::DictionaryValue> options,
+    base::Value options,
     net::CompletionOnceCallback callback,
     std::unique_ptr<CertificateManagerModel> model) {
   certificate_manager_model_ = std::move(model);
   int rv =
-      ImportIntoCertStore(certificate_manager_model_.get(), *(options.get()));
+      ImportIntoCertStore(certificate_manager_model_.get(), std::move(options));
   std::move(callback).Run(rv);
 }
 #endif
@@ -1107,19 +1236,21 @@ v8::Local<v8::Value> App::GetJumpListSettings() {
     LOG(ERROR) << "Failed to begin Jump List transaction.";
   }
 
-  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate());
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("minItems", min_items);
-  dict.Set("removedItems", gin::ConvertToV8(isolate(), removed_items));
+  dict.Set("removedItems", gin::ConvertToV8(isolate, removed_items));
   return dict.GetHandle();
 }
 
 JumpListResult App::SetJumpList(v8::Local<v8::Value> val,
-                                gin_helper::Arguments* args) {
+                                gin::Arguments* args) {
   std::vector<JumpListCategory> categories;
   bool delete_jump_list = val->IsNull();
   if (!delete_jump_list &&
       !gin::ConvertFromV8(args->isolate(), val, &categories)) {
-    args->ThrowError("Argument must be null or an array of categories");
+    gin_helper::ErrorThrower(args->isolate())
+        .ThrowError("Argument must be null or an array of categories");
     return JumpListResult::ARGUMENT_ERROR;
   }
 
@@ -1151,8 +1282,9 @@ JumpListResult App::SetJumpList(v8::Local<v8::Value> val,
 #endif  // defined(OS_WIN)
 
 v8::Local<v8::Promise> App::GetFileIcon(const base::FilePath& path,
-                                        gin_helper::Arguments* args) {
-  gin_helper::Promise<gfx::Image> promise(isolate());
+                                        gin::Arguments* args) {
+  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+  gin_helper::Promise<gfx::Image> promise(isolate);
   v8::Local<v8::Promise> handle = promise.GetHandle();
   base::FilePath normalized_path = path.NormalizePathSeparators();
 
@@ -1216,6 +1348,10 @@ std::vector<gin_helper::Dictionary> App::GetAppMetrics(v8::Isolate* isolate) {
                              process_metric.second->type));
     pid_dict.Set("creationTime",
                  process_metric.second->process.CreationTime().ToJsTime());
+
+    if (!process_metric.second->name.empty()) {
+      pid_dict.Set("name", process_metric.second->name);
+    }
 
 #if !defined(OS_LINUX)
     auto memory_info = process_metric.second->GetMemoryInfo();
@@ -1289,7 +1425,7 @@ v8::Local<v8::Promise> App::GetGPUInfo(v8::Isolate* isolate,
 }
 
 static void RemoveNoSandboxSwitch(base::CommandLine* command_line) {
-  if (command_line->HasSwitch(service_manager::switches::kNoSandbox)) {
+  if (command_line->HasSwitch(sandbox::policy::switches::kNoSandbox)) {
     const base::CommandLine::CharType* noSandboxArg =
         FILE_PATH_LITERAL("--no-sandbox");
     base::CommandLine::StringVector modified_command_line;
@@ -1340,7 +1476,7 @@ bool App::IsInApplicationsFolder() {
   return ElectronBundleMover::IsCurrentAppInApplicationsFolder();
 }
 
-int DockBounce(gin_helper::Arguments* args) {
+int DockBounce(gin::Arguments* args) {
   int request_id = -1;
   std::string type = "informational";
   args->GetNext(&type);
@@ -1390,16 +1526,19 @@ v8::Local<v8::Value> App::GetDockAPI(v8::Isolate* isolate) {
 #endif
 
 // static
-gin::Handle<App> App::Create(v8::Isolate* isolate) {
-  return gin::CreateHandle(isolate, new App(isolate));
+App* App::Get() {
+  static base::NoDestructor<App> app;
+  return app.get();
 }
 
 // static
-void App::BuildPrototype(v8::Isolate* isolate,
-                         v8::Local<v8::FunctionTemplate> prototype) {
-  prototype->SetClassName(gin::StringToV8(isolate, "App"));
+gin::Handle<App> App::Create(v8::Isolate* isolate) {
+  return gin::CreateHandle(isolate, Get());
+}
+
+gin::ObjectTemplateBuilder App::GetObjectTemplateBuilder(v8::Isolate* isolate) {
   auto browser = base::Unretained(Browser::Get());
-  gin_helper::ObjectTemplateBuilder(isolate, prototype->PrototypeTemplate())
+  return gin_helper::EventEmitterMixin<App>::GetObjectTemplateBuilder(isolate)
       .SetMethod("quit", base::BindRepeating(&Browser::Quit, browser))
       .SetMethod("exit", base::BindRepeating(&Browser::Exit, browser))
       .SetMethod("focus", base::BindRepeating(&Browser::Focus, browser))
@@ -1407,8 +1546,8 @@ void App::BuildPrototype(v8::Isolate* isolate,
                  base::BindRepeating(&Browser::GetVersion, browser))
       .SetMethod("setVersion",
                  base::BindRepeating(&Browser::SetVersion, browser))
-      .SetMethod("_getName", base::BindRepeating(&Browser::GetName, browser))
-      .SetMethod("_setName", base::BindRepeating(&Browser::SetName, browser))
+      .SetMethod("getName", base::BindRepeating(&Browser::GetName, browser))
+      .SetMethod("setName", base::BindRepeating(&Browser::SetName, browser))
       .SetMethod("isReady", base::BindRepeating(&Browser::is_ready, browser))
       .SetMethod("whenReady", base::BindRepeating(&Browser::WhenReady, browser))
       .SetMethod("addRecentDocument",
@@ -1426,23 +1565,23 @@ void App::BuildPrototype(v8::Isolate* isolate,
       .SetMethod(
           "removeAsDefaultProtocolClient",
           base::BindRepeating(&Browser::RemoveAsDefaultProtocolClient, browser))
+#if !defined(OS_LINUX)
+      .SetMethod(
+          "getApplicationInfoForProtocol",
+          base::BindRepeating(&Browser::GetApplicationInfoForProtocol, browser))
+#endif
       .SetMethod(
           "getApplicationNameForProtocol",
           base::BindRepeating(&Browser::GetApplicationNameForProtocol, browser))
-      .SetMethod("_setBadgeCount",
+      .SetMethod("setBadgeCount",
                  base::BindRepeating(&Browser::SetBadgeCount, browser))
-      .SetMethod("_getBadgeCount",
+      .SetMethod("getBadgeCount",
                  base::BindRepeating(&Browser::GetBadgeCount, browser))
       .SetMethod("getLoginItemSettings", &App::GetLoginItemSettings)
       .SetMethod("setLoginItemSettings",
                  base::BindRepeating(&Browser::SetLoginItemSettings, browser))
       .SetMethod("isEmojiPanelSupported",
                  base::BindRepeating(&Browser::IsEmojiPanelSupported, browser))
-      .SetProperty("badgeCount",
-                   base::BindRepeating(&Browser::GetBadgeCount, browser),
-                   base::BindRepeating(&Browser::SetBadgeCount, browser))
-      .SetProperty("name", base::BindRepeating(&Browser::GetName, browser),
-                   base::BindRepeating(&Browser::SetName, browser))
 #if defined(OS_MACOSX)
       .SetMethod("hide", base::BindRepeating(&Browser::Hide, browser))
       .SetMethod("show", base::BindRepeating(&Browser::Show, browser))
@@ -1465,12 +1604,17 @@ void App::BuildPrototype(v8::Isolate* isolate,
                  base::BindRepeating(&Browser::SetAboutPanelOptions, browser))
       .SetMethod("showAboutPanel",
                  base::BindRepeating(&Browser::ShowAboutPanel, browser))
+#if defined(OS_MACOSX)
+      .SetMethod(
+          "isSecureKeyboardEntryEnabled",
+          base::BindRepeating(&Browser::IsSecureKeyboardEntryEnabled, browser))
+      .SetMethod(
+          "setSecureKeyboardEntryEnabled",
+          base::BindRepeating(&Browser::SetSecureKeyboardEntryEnabled, browser))
+#endif
 #if defined(OS_MACOSX) || defined(OS_WIN)
       .SetMethod("showEmojiPanel",
                  base::BindRepeating(&Browser::ShowEmojiPanel, browser))
-      .SetProperty("accessibilitySupportEnabled",
-                   &App::IsAccessibilitySupportEnabled,
-                   &App::SetAccessibilitySupportEnabled)
 #endif
 #if defined(OS_WIN)
       .SetMethod("setUserTasks",
@@ -1497,9 +1641,9 @@ void App::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("requestSingleInstanceLock", &App::RequestSingleInstanceLock)
       .SetMethod("releaseSingleInstanceLock", &App::ReleaseSingleInstanceLock)
       .SetMethod("relaunch", &App::Relaunch)
-      .SetMethod("_isAccessibilitySupportEnabled",
+      .SetMethod("isAccessibilitySupportEnabled",
                  &App::IsAccessibilitySupportEnabled)
-      .SetMethod("_setAccessibilitySupportEnabled",
+      .SetMethod("setAccessibilitySupportEnabled",
                  &App::SetAccessibilitySupportEnabled)
       .SetMethod("disableHardwareAcceleration",
                  &App::DisableHardwareAcceleration)
@@ -1524,6 +1668,10 @@ void App::BuildPrototype(v8::Isolate* isolate,
                    &App::SetBrowserClientCanUseCustomSiteInstance);
 }
 
+const char* App::GetTypeName() {
+  return "App";
+}
+
 }  // namespace api
 
 }  // namespace electron
@@ -1536,12 +1684,9 @@ void Initialize(v8::Local<v8::Object> exports,
                 void* priv) {
   v8::Isolate* isolate = context->GetIsolate();
   gin_helper::Dictionary dict(isolate, exports);
-  dict.Set("App", electron::api::App::GetConstructor(isolate)
-                      ->GetFunction(context)
-                      .ToLocalChecked());
   dict.Set("app", electron::api::App::Create(isolate));
 }
 
 }  // namespace
 
-NODE_LINKED_MODULE_CONTEXT_AWARE(atom_browser_app, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(electron_browser_app, Initialize)

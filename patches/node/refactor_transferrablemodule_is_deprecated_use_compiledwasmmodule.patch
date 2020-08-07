@@ -4,13 +4,13 @@ Date: Mon, 2 Dec 2019 17:25:38 -0800
 Subject: refactor: TransferrableModule is deprecated, use CompiledWasmModule
  instead
 
-This will be upstreamed to nodejs/node
+This is already present in Node.js v14 and can be removed when we upgrade.
 
 diff --git a/src/node_messaging.cc b/src/node_messaging.cc
-index 19065fdb7d1be5adb0f521dd27df08e5263fa40d..de92a9cc3d8cb57c2ce2a315f868b01ea9aba368 100644
+index f19e541bff08fb69209a50f4b21257de77efaf9f..f42ed9661500d862545c09cdb233ca8a99cafd35 100644
 --- a/src/node_messaging.cc
 +++ b/src/node_messaging.cc
-@@ -58,7 +58,7 @@ class DeserializerDelegate : public ValueDeserializer::Delegate {
+@@ -56,7 +56,7 @@ class DeserializerDelegate : public ValueDeserializer::Delegate {
        Environment* env,
        const std::vector<MessagePort*>& message_ports,
        const std::vector<Local<SharedArrayBuffer>>& shared_array_buffers,
@@ -19,7 +19,7 @@ index 19065fdb7d1be5adb0f521dd27df08e5263fa40d..de92a9cc3d8cb57c2ce2a315f868b01e
        : message_ports_(message_ports),
          shared_array_buffers_(shared_array_buffers),
          wasm_modules_(wasm_modules) {}
-@@ -82,7 +82,7 @@ class DeserializerDelegate : public ValueDeserializer::Delegate {
+@@ -80,7 +80,7 @@ class DeserializerDelegate : public ValueDeserializer::Delegate {
    MaybeLocal<WasmModuleObject> GetWasmModuleFromId(
        Isolate* isolate, uint32_t transfer_id) override {
      CHECK_LE(transfer_id, wasm_modules_.size());
@@ -28,7 +28,7 @@ index 19065fdb7d1be5adb0f521dd27df08e5263fa40d..de92a9cc3d8cb57c2ce2a315f868b01e
          isolate, wasm_modules_[transfer_id]);
    }
  
-@@ -91,7 +91,7 @@ class DeserializerDelegate : public ValueDeserializer::Delegate {
+@@ -89,7 +89,7 @@ class DeserializerDelegate : public ValueDeserializer::Delegate {
   private:
    const std::vector<MessagePort*>& message_ports_;
    const std::vector<Local<SharedArrayBuffer>>& shared_array_buffers_;
@@ -37,7 +37,7 @@ index 19065fdb7d1be5adb0f521dd27df08e5263fa40d..de92a9cc3d8cb57c2ce2a315f868b01e
  };
  
  }  // anonymous namespace
-@@ -181,7 +181,7 @@ void Message::AddMessagePort(std::unique_ptr<MessagePortData>&& data) {
+@@ -179,7 +179,7 @@ void Message::AddMessagePort(std::unique_ptr<MessagePortData>&& data) {
    message_ports_.emplace_back(std::move(data));
  }
  
@@ -46,7 +46,7 @@ index 19065fdb7d1be5adb0f521dd27df08e5263fa40d..de92a9cc3d8cb57c2ce2a315f868b01e
    wasm_modules_.emplace_back(std::move(mod));
    return wasm_modules_.size() - 1;
  }
-@@ -264,7 +264,7 @@ class SerializerDelegate : public ValueSerializer::Delegate {
+@@ -276,7 +276,7 @@ class SerializerDelegate : public ValueSerializer::Delegate {
  
    Maybe<uint32_t> GetWasmModuleTransferId(
        Isolate* isolate, Local<WasmModuleObject> module) override {
@@ -56,7 +56,7 @@ index 19065fdb7d1be5adb0f521dd27df08e5263fa40d..de92a9cc3d8cb57c2ce2a315f868b01e
  
    void Finish() {
 diff --git a/src/node_messaging.h b/src/node_messaging.h
-index 054521b0563c4256f65d6f01eeeb108e3a515d86..53c766da554452c635a3bdfb38b75c0492bbfb5e 100644
+index 43f710a84e831502bcfb574d2c456a0f9e815994..28986814b9f32ab310510f93ef9e6e97851e032d 100644
 --- a/src/node_messaging.h
 +++ b/src/node_messaging.h
 @@ -58,7 +58,7 @@ class Message : public MemoryRetainer {

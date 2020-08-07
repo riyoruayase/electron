@@ -10,6 +10,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/strings/sys_string_conversions.h"
+#include "gin/arguments.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
@@ -33,12 +34,24 @@ double safeShift(double in, double def) {
   return def;
 }
 
-gin::Handle<NativeImage> NativeImage::CreateFromNamedImage(
-    gin::Arguments* args,
-    const std::string& name) {
+gin::Handle<NativeImage> NativeImage::CreateFromNamedImage(gin::Arguments* args,
+                                                           std::string name) {
   @autoreleasepool {
     std::vector<double> hsl_shift;
+
+    // The string representations of NSImageNames don't match the strings
+    // themselves; they instead follow the following pattern:
+    //  * NSImageNameActionTemplate -> "NSActionTemplate"
+    //  * NSImageNameMultipleDocuments -> "NSMultipleDocuments"
+    // To account for this, we strip out "ImageName" from the passed string.
+    std::string to_remove("ImageName");
+    size_t pos = name.find(to_remove);
+    if (pos != std::string::npos) {
+      name.erase(pos, to_remove.length());
+    }
+
     NSImage* image = [NSImage imageNamed:base::SysUTF8ToNSString(name)];
+
     if (!image.valid) {
       return CreateEmpty(args->isolate());
     }

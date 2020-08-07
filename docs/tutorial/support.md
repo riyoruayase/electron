@@ -34,8 +34,10 @@ tools and resources.
 ## Supported Versions
 
 The latest three *stable* major versions are supported by the Electron team.
-For example, if the latest release is 6.x.y, then the 5.x.y as well
-as the 4.x.y series are supported.
+For example, if the latest release is 6.1.x, then the 5.0.x as well
+as the 4.2.x series are supported.  We only support the latest minor release
+for each stable release series.  This means that in the case of a security fix
+6.1.x will receive the fix, but we will not release a new version of 6.0.x.
 
 The latest stable release unilaterally receives all fixes from `master`,
 and the version prior to that receives the vast majority of those fixes
@@ -47,10 +49,18 @@ fixes previously merged to `master`, though this may be on a case-by-case
 basis for some older supported lines. All contested decisions around release
 line backports will be resolved by the [Releases Working Group](https://github.com/electron/governance/tree/master/wg-releases) as an agenda item at their weekly meeting the week the backport PR is raised.
 
+When an API is changed or removed in a way that breaks existing functionality, the
+previous functionality will be supported for a minimum of two major versions when
+possible before being removed. For example, if a function takes three arguments,
+and that number is reduced to two in major version 10, the three-argument version would
+continue to work until, at minimum, major version 12. Past the minimum two-version
+threshold, we will attempt to support backwards compatibility beyond two versions
+until the maintainers feel the maintenance burden is too high to continue doing so.
+
 ### Currently supported versions
+- 9.x.y
 - 8.x.y
 - 7.x.y
-- 6.x.y
 
 ### End-of-life
 

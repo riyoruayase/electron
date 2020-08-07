@@ -43,8 +43,7 @@ class OffScreenWebContentsView : public content::WebContentsView,
   gfx::NativeView GetNativeView() const override;
   gfx::NativeView GetContentNativeView() const override;
   gfx::NativeWindow GetTopLevelNativeWindow() const override;
-  void GetContainerBounds(gfx::Rect* out) const override;
-  void SizeContents(const gfx::Size& size) override;
+  gfx::Rect GetContainerBounds() const override;
   void Focus() override;
   void SetInitialFocus() override;
   void StoreFocus() override;
@@ -58,7 +57,6 @@ class OffScreenWebContentsView : public content::WebContentsView,
   content::RenderWidgetHostViewBase* CreateViewForChildWidget(
       content::RenderWidgetHost* render_widget_host) override;
   void SetPageTitle(const base::string16& title) override;
-  void RenderViewCreated(content::RenderViewHost* host) override;
   void RenderViewReady() override;
   void RenderViewHostChanged(content::RenderViewHost* old_host,
                              content::RenderViewHost* new_host) override;

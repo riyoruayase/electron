@@ -19,9 +19,48 @@ declare namespace Electron {
     setAppPath(path: string | null): void;
   }
 
+  type TouchBarItemType = NonNullable<Electron.TouchBarConstructorOptions['items']>[0];
+
+  interface BrowserWindow {
+    _touchBar: Electron.TouchBar | null;
+    _setTouchBarItems: (items: TouchBarItemType[]) => void;
+    _setEscapeTouchBarItem: (item: TouchBarItemType | {}) => void;
+    _refreshTouchBarItem: (itemID: string) => void;
+    on(event: '-touch-bar-interaction', listener: (event: Event, itemID: string, details: any) => void): this;
+    removeListener(event: '-touch-bar-interaction', listener: (event: Event, itemID: string, details: any) => void): this;
+  }
+
+  interface ContextBridge {
+    internalContextBridge: {
+      contextIsolationEnabled: boolean;
+      overrideGlobalValueFromIsolatedWorld(keys: string[], value: any): void;
+      overrideGlobalValueWithDynamicPropsFromIsolatedWorld(keys: string[], value: any): void;
+      overrideGlobalPropertyFromIsolatedWorld(keys: string[], getter: Function, setter?: Function): void;
+      isInMainWorld(): boolean;
+    }
+  }
+
+  interface TouchBar {
+    _removeFromWindow: (win: BrowserWindow) => void;
+  }
+
   interface WebContents {
     _getURL(): string;
+    _loadURL(url: string, options: Electron.LoadURLOptions): void;
+    _stop(): void;
+    _goBack(): void;
+    _goForward(): void;
+    _goToOffset(offset: number): void;
     getOwnerBrowserWindow(): Electron.BrowserWindow;
+    getWebPreferences(): Electron.WebPreferences;
+    getLastWebPreferences(): Electron.WebPreferences;
+    _getPreloadPaths(): string[];
+    equal(other: WebContents): boolean;
+  }
+
+  interface WebPreferences {
+    guestInstanceId?: number;
+    openerId?: number;
   }
 
   interface SerializedError {
@@ -68,11 +107,103 @@ declare namespace Electron {
   }
 
   interface WebContentsInternal extends Electron.WebContents {
+    _send(internal: boolean, sendToAll: boolean, channel: string, args: any): boolean;
+    _sendToFrame(internal: boolean, sendToAll: boolean, frameId: number, channel: string, args: any): boolean;
+    _sendToFrameInternal(frameId: number, channel: string, args: any): boolean;
+    _postMessage(channel: string, message: any, transfer?: any[]): void;
     _sendInternal(channel: string, ...args: any[]): void;
     _sendInternalToAll(channel: string, ...args: any[]): void;
+    _printToPDF(options: any): Promise<Buffer>;
+    _print(options: any, callback?: (success: boolean, failureReason: string) => void): void;
+    _getPrinters(): Electron.PrinterInfo[];
+    _init(): void;
+    canGoToIndex(index: number): boolean;
+    getActiveIndex(): number;
+    length(): number;
   }
 
+  interface Menu {
+    _init(): void;
+    _isCommandIdChecked(id: string): boolean;
+    _isCommandIdEnabled(id: string): boolean;
+    _shouldCommandIdWorkWhenHidden(id: string): boolean;
+    _isCommandIdVisible(id: string): boolean;
+    _getAcceleratorForCommandId(id: string, useDefaultAccelerator: boolean): Accelerator | undefined;
+    _shouldRegisterAcceleratorForCommandId(id: string): boolean;
+    _callMenuWillShow(): void;
+    _executeCommand(event: any, id: number): void;
+    _menuWillShow(): void;
+    commandsMap: Record<string, MenuItem>;
+    groupsMap: Record<string, {
+      checked: boolean;
+    }[]>;
+    getItemCount(): number;
+    popupAt(window: BaseWindow, x: number, y: number, positioning: number, callback: () => void): void;
+    closePopupAt(id: number): void;
+    setSublabel(index: number, label: string): void;
+    setToolTip(index: number, tooltip: string): void;
+    setIcon(index: number, image: string | NativeImage): void;
+    setRole(index: number, role: string): void;
+    insertItem(index: number, commandId: number, label: string): void;
+    insertCheckItem(index: number, commandId: number, label: string): void;
+    insertRadioItem(index: number, commandId: number, label: string, groupId: number): void;
+    insertSeparator(index: number): void;
+    insertSubMenu(index: number, commandId: number, label: string, submenu?: Menu): void;
+    delegate?: any;
+    getAcceleratorTextAt(index: number): string;
+  }
+
+  interface MenuItem {
+    overrideReadOnlyProperty(property: string, value: any): void;
+    groupId: number;
+    getDefaultRoleAccelerator(): Accelerator | undefined;
+    acceleratorWorksWhenHidden?: boolean;
+  }
+
+
   const deprecate: ElectronInternal.DeprecationUtil;
+
+  namespace Main {
+    const deprecate: ElectronInternal.DeprecationUtil;
+  }
+
+  class View {}
+  
+  // Experimental views API
+  class BaseWindow {
+    constructor(args: {show: boolean})
+    setContentView(view: View): void
+    static fromId(id: number): BaseWindow;
+    static getAllWindows(): BaseWindow[];
+    isFocused(): boolean;
+    static getFocusedWindow(): BaseWindow | undefined;
+    setMenu(menu: Menu): void;
+  }
+  class WebContentsView {
+    constructor(options: BrowserWindowConstructorOptions)
+  }
+
+  // Deprecated / undocumented BrowserWindow methods
+  interface BrowserWindow {
+    getURL(): string;
+    send(channel: string, ...args: any[]): void;
+    openDevTools(options?: Electron.OpenDevToolsOptions): void;
+    closeDevTools(): void;
+    isDevToolsOpened(): void;
+    isDevToolsFocused(): void;
+    toggleDevTools(): void;
+    inspectElement(x: number, y: number): void;
+    inspectSharedWorker(): void;
+    inspectServiceWorker(): void;
+    getBackgroundThrottling(): void;
+    setBackgroundThrottling(allowed: boolean): void;
+  }
+
+  namespace Main {
+    class BaseWindow extends Electron.BaseWindow {}
+    class View extends Electron.View {}
+    class WebContentsView extends Electron.WebContentsView {}
+  }
 }
 
 declare namespace ElectronInternal {
@@ -86,15 +217,15 @@ declare namespace ElectronInternal {
     removeFunction(fn: Function, removedName: string): Function;
     renameFunction(fn: Function, newName: string | Function): Function;
     event(emitter: NodeJS.EventEmitter, oldName: string, newName: string): void;
-    fnToProperty(module: any, prop: string, getter: string, setter?: string): void;
-    removeProperty<T, K extends (keyof T & string)>(object: T, propertyName: K): T;
+    removeProperty<T, K extends (keyof T & string)>(object: T, propertyName: K, onlyForValues?: any[]): T;
     renameProperty<T, K extends (keyof T & string)>(object: T, oldName: string, newName: K): T;
-    moveAPI(fn: Function, oldUsage: string, newUsage: string): Function;
+    moveAPI<T extends Function>(fn: T, oldUsage: string, newUsage: string): T;
   }
 
   interface DesktopCapturer {
     startHandling(captureWindow: boolean, captureScreen: boolean, thumbnailSize: Electron.Size, fetchWindowIcons: boolean): void;
-    emit: typeof NodeJS.EventEmitter.prototype.emit | null;
+    _onerror: (error: string) => void;
+    _onfinished: (sources: Electron.DesktopCapturerSource[], fetchWindowIcons: boolean) => void;
   }
 
   interface GetSourcesOptions {
@@ -107,9 +238,9 @@ declare namespace ElectronInternal {
   interface GetSourcesResult {
     id: string;
     name: string;
-    thumbnail: string;
+    thumbnail: Electron.NativeImage;
     display_id: string;
-    appIcon: string | null;
+    appIcon: Electron.NativeImage | null;
   }
 
   interface KeyWeakMap<K, V> {
@@ -153,7 +284,7 @@ declare namespace ElectronInternal {
     isMainFrame: boolean;
   }
 
-  abstract class WebViewElement extends HTMLElement {
+  class WebViewElement extends HTMLElement {
     static observedAttributes: Array<string>;
 
     public contentWindow: Window;

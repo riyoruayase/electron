@@ -127,8 +127,6 @@ class NativeWindowViews : public NativeWindow,
 
   bool IsVisibleOnAllWorkspaces() override;
 
-  void SetGTKDarkThemeEnabled(bool use_dark_theme) override;
-
   content::DesktopMediaID GetDesktopMediaID() const override;
   gfx::AcceleratedWidget GetAcceleratedWidget() const override;
   NativeWindowHandle GetNativeWindowHandle() const override;
@@ -157,6 +155,10 @@ class NativeWindowViews : public NativeWindow,
   void SetIcon(const gfx::ImageSkia& icon);
 #endif
 
+#if defined(USE_X11)
+  void SetGTKDarkThemeEnabled(bool use_dark_theme);
+#endif
+
   SkRegion* draggable_region() const { return draggable_region_.get(); }
 
 #if defined(OS_WIN)
@@ -182,7 +184,7 @@ class NativeWindowViews : public NativeWindow,
       gfx::NativeView child,
       const gfx::Point& location) override;
   views::ClientView* CreateClientView(views::Widget* widget) override;
-  views::NonClientFrameView* CreateNonClientFrameView(
+  std::unique_ptr<views::NonClientFrameView> CreateNonClientFrameView(
       views::Widget* widget) override;
   void OnWidgetMove() override;
 #if defined(OS_WIN)

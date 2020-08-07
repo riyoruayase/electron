@@ -8,7 +8,9 @@
 
 #include <utility>
 
+#include "base/command_line.h"
 #include "chrome/common/chrome_switches.h"
+#include "components/federated_learning/floc_blocklist_service.h"  // nogncheck
 #include "components/prefs/in_memory_pref_store.h"
 #include "components/prefs/overlay_user_pref_store.h"
 #include "components/prefs/pref_registry.h"
@@ -23,7 +25,6 @@
 #include "net/proxy_resolution/proxy_config.h"
 #include "net/proxy_resolution/proxy_config_service.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
-#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "services/network/public/cpp/network_switches.h"
 
 #if BUILDFLAG(ENABLE_PRINTING)
@@ -233,13 +234,13 @@ BrowserProcessImpl::safe_browsing_service() {
   return nullptr;
 }
 
-safe_browsing::ClientSideDetectionService*
-BrowserProcessImpl::safe_browsing_detection_service() {
+subresource_filter::RulesetService*
+BrowserProcessImpl::subresource_filter_ruleset_service() {
   return nullptr;
 }
 
-subresource_filter::RulesetService*
-BrowserProcessImpl::subresource_filter_ruleset_service() {
+federated_learning::FlocBlocklistService*
+BrowserProcessImpl::floc_blocklist_service() {
   return nullptr;
 }
 

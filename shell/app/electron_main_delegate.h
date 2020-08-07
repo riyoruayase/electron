@@ -39,10 +39,11 @@ class ElectronMainDelegate : public content::ContentMainDelegate {
   int RunProcess(
       const std::string& process_type,
       const content::MainFunctionParams& main_function_params) override;
-#if defined(OS_MACOSX)
-  bool DelaySandboxInitialization(const std::string& process_type) override;
-#endif
   bool ShouldCreateFeatureList() override;
+  bool ShouldLockSchemeRegistry() override;
+#if defined(OS_LINUX)
+  void ZygoteForked() override;
+#endif
 
  private:
 #if defined(OS_MACOSX)

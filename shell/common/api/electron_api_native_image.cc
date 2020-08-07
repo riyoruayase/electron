@@ -14,6 +14,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
+#include "gin/arguments.h"
+#include "gin/object_template_builder.h"
+#include "gin/per_isolate_data.h"
 #include "net/base/data_url.h"
 #include "shell/common/asar/asar_util.h"
 #include "shell/common/gin_converters/file_path_converter.h"
@@ -21,6 +24,7 @@
 #include "shell/common/gin_converters/gurl_converter.h"
 #include "shell/common/gin_converters/value_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/function_template_extensions.h"
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
 #include "shell/common/skia_util.h"
@@ -62,6 +66,7 @@ base::FilePath NormalizePath(const base::FilePath& path) {
     return path;
   }
 
+  base::ThreadRestrictions::ScopedAllowIO allow_blocking;
   base::FilePath absolute_path = MakeAbsoluteFilePath(path);
   // MakeAbsoluteFilePath returns an empty path on failures so use original path
   if (absolute_path.empty()) {
@@ -103,24 +108,22 @@ void Noop(char*, void*) {}
 }  // namespace
 
 NativeImage::NativeImage(v8::Isolate* isolate, const gfx::Image& image)
-    : image_(image) {
-  Init(isolate);
+    : image_(image), isolate_(isolate) {
   if (image_.HasRepresentation(gfx::Image::kImageRepSkia)) {
-    isolate->AdjustAmountOfExternalAllocatedMemory(
+    isolate_->AdjustAmountOfExternalAllocatedMemory(
         image_.ToImageSkia()->bitmap()->computeByteSize());
   }
 }
 
 #if defined(OS_WIN)
 NativeImage::NativeImage(v8::Isolate* isolate, const base::FilePath& hicon_path)
-    : hicon_path_(hicon_path) {
+    : hicon_path_(hicon_path), isolate_(isolate) {
   // Use the 256x256 icon as fallback icon.
   gfx::ImageSkia image_skia;
   electron::util::ReadImageSkiaFromICO(&image_skia, GetHICON(256));
   image_ = gfx::Image(image_skia);
-  Init(isolate);
   if (image_.HasRepresentation(gfx::Image::kImageRepSkia)) {
-    isolate->AdjustAmountOfExternalAllocatedMemory(
+    isolate_->AdjustAmountOfExternalAllocatedMemory(
         image_.ToImageSkia()->bitmap()->computeByteSize());
   }
 }
@@ -128,7 +131,7 @@ NativeImage::NativeImage(v8::Isolate* isolate, const base::FilePath& hicon_path)
 
 NativeImage::~NativeImage() {
   if (image_.HasRepresentation(gfx::Image::kImageRepSkia)) {
-    isolate()->AdjustAmountOfExternalAllocatedMemory(-static_cast<int64_t>(
+    isolate_->AdjustAmountOfExternalAllocatedMemory(-static_cast<int64_t>(
         image_.ToImageSkia()->bitmap()->computeByteSize()));
   }
 }
@@ -248,21 +251,32 @@ bool NativeImage::IsEmpty() {
   return image_.IsEmpty();
 }
 
-gfx::Size NativeImage::GetSize() {
-  return image_.Size();
+gfx::Size NativeImage::GetSize(const base::Optional<float> scale_factor) {
+  float sf = scale_factor.value_or(1.0f);
+  gfx::ImageSkiaRep image_rep = image_.AsImageSkia().GetRepresentation(sf);
+
+  return gfx::Size(image_rep.GetWidth(), image_rep.GetHeight());
 }
 
-float NativeImage::GetAspectRatio() {
-  gfx::Size size = GetSize();
+std::vector<float> NativeImage::GetScaleFactors() {
+  gfx::ImageSkia image_skia = image_.AsImageSkia();
+  return image_skia.GetSupportedScales();
+}
+
+float NativeImage::GetAspectRatio(const base::Optional<float> scale_factor) {
+  float sf = scale_factor.value_or(1.0f);
+  gfx::Size size = GetSize(sf);
   if (size.IsEmpty())
     return 1.f;
   else
     return static_cast<float>(size.width()) / static_cast<float>(size.height());
 }
 
-gin::Handle<NativeImage> NativeImage::Resize(v8::Isolate* isolate,
+gin::Handle<NativeImage> NativeImage::Resize(gin::Arguments* args,
                                              base::DictionaryValue options) {
-  gfx::Size size = GetSize();
+  float scale_factor = GetScaleFactorFromOptions(args);
+
+  gfx::Size size = GetSize(scale_factor);
   int width = size.width();
   int height = size.height();
   bool width_set = options.GetInteger("width", &width);
@@ -272,11 +286,12 @@ gin::Handle<NativeImage> NativeImage::Resize(v8::Isolate* isolate,
   if (width_set && !height_set) {
     // Scale height to preserve original aspect ratio
     size.set_height(width);
-    size = gfx::ScaleToRoundedSize(size, 1.f, 1.f / GetAspectRatio());
+    size =
+        gfx::ScaleToRoundedSize(size, 1.f, 1.f / GetAspectRatio(scale_factor));
   } else if (height_set && !width_set) {
     // Scale width to preserve original aspect ratio
     size.set_width(height);
-    size = gfx::ScaleToRoundedSize(size, GetAspectRatio(), 1.f);
+    size = gfx::ScaleToRoundedSize(size, GetAspectRatio(scale_factor), 1.f);
   }
 
   skia::ImageOperations::ResizeMethod method =
@@ -290,8 +305,8 @@ gin::Handle<NativeImage> NativeImage::Resize(v8::Isolate* isolate,
 
   gfx::ImageSkia resized = gfx::ImageSkiaOperations::CreateResizedImage(
       image_.AsImageSkia(), method, size);
-  return gin::CreateHandle(isolate,
-                           new NativeImage(isolate, gfx::Image(resized)));
+  return gin::CreateHandle(
+      args->isolate(), new NativeImage(args->isolate(), gfx::Image(resized)));
 }
 
 gin::Handle<NativeImage> NativeImage::Crop(v8::Isolate* isolate,
@@ -490,28 +505,37 @@ gin::Handle<NativeImage> NativeImage::CreateFromDataURL(v8::Isolate* isolate,
 }
 
 #if !defined(OS_MACOSX)
-gin::Handle<NativeImage> NativeImage::CreateFromNamedImage(
-    gin::Arguments* args,
-    const std::string& name) {
+gin::Handle<NativeImage> NativeImage::CreateFromNamedImage(gin::Arguments* args,
+                                                           std::string name) {
   return CreateEmpty(args->isolate());
 }
 #endif
 
 // static
-void NativeImage::BuildPrototype(v8::Isolate* isolate,
-                                 v8::Local<v8::FunctionTemplate> prototype) {
-  prototype->SetClassName(gin::StringToV8(isolate, "NativeImage"));
-  gin_helper::ObjectTemplateBuilder(isolate, prototype->PrototypeTemplate())
+gin::ObjectTemplateBuilder NativeImage::GetObjectTemplateBuilder(
+    v8::Isolate* isolate) {
+  gin::PerIsolateData* data = gin::PerIsolateData::From(isolate);
+  auto* wrapper_info = &kWrapperInfo;
+  v8::Local<v8::FunctionTemplate> constructor =
+      data->GetFunctionTemplate(wrapper_info);
+  if (constructor.IsEmpty()) {
+    constructor = v8::FunctionTemplate::New(isolate);
+    constructor->SetClassName(gin::StringToV8(isolate, GetTypeName()));
+    data->SetFunctionTemplate(wrapper_info, constructor);
+  }
+  return gin::ObjectTemplateBuilder(isolate, GetTypeName(),
+                                    constructor->InstanceTemplate())
       .SetMethod("toPNG", &NativeImage::ToPNG)
       .SetMethod("toJPEG", &NativeImage::ToJPEG)
       .SetMethod("toBitmap", &NativeImage::ToBitmap)
       .SetMethod("getBitmap", &NativeImage::GetBitmap)
+      .SetMethod("getScaleFactors", &NativeImage::GetScaleFactors)
       .SetMethod("getNativeHandle", &NativeImage::GetNativeHandle)
       .SetMethod("toDataURL", &NativeImage::ToDataURL)
       .SetMethod("isEmpty", &NativeImage::IsEmpty)
       .SetMethod("getSize", &NativeImage::GetSize)
-      .SetMethod("_setTemplateImage", &NativeImage::SetTemplateImage)
-      .SetMethod("_isTemplateImage", &NativeImage::IsTemplateImage)
+      .SetMethod("setTemplateImage", &NativeImage::SetTemplateImage)
+      .SetMethod("isTemplateImage", &NativeImage::IsTemplateImage)
       .SetProperty("isMacTemplateImage", &NativeImage::IsTemplateImage,
                    &NativeImage::SetTemplateImage)
       .SetMethod("resize", &NativeImage::Resize)
@@ -519,6 +543,13 @@ void NativeImage::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("getAspectRatio", &NativeImage::GetAspectRatio)
       .SetMethod("addRepresentation", &NativeImage::AddRepresentation);
 }
+
+const char* NativeImage::GetTypeName() {
+  return "NativeImage";
+}
+
+// static
+gin::WrapperInfo NativeImage::kWrapperInfo = {gin::kEmbedderNativeGin};
 
 }  // namespace api
 
@@ -529,8 +560,9 @@ namespace gin {
 v8::Local<v8::Value> Converter<electron::api::NativeImage*>::ToV8(
     v8::Isolate* isolate,
     electron::api::NativeImage* val) {
-  if (val)
-    return val->GetWrapper();
+  v8::Local<v8::Object> ret;
+  if (val && val->GetWrapper(isolate).ToLocal(&ret))
+    return ret;
   else
     return v8::Null(isolate);
 }
@@ -557,9 +589,11 @@ bool Converter<electron::api::NativeImage*>::FromV8(
     return true;
   }
 
+  // reinterpret_cast is safe here because NativeImage is the only subclass of
+  // gin::Wrappable<NativeImage>.
   *out = static_cast<electron::api::NativeImage*>(
-      static_cast<gin_helper::WrappableBase*>(
-          gin_helper::internal::FromV8Impl(isolate, val)));
+      static_cast<gin::WrappableBase*>(gin::internal::FromV8Impl(
+          isolate, val, &electron::api::NativeImage::kWrapperInfo)));
   return *out != nullptr;
 }
 
@@ -575,9 +609,6 @@ void Initialize(v8::Local<v8::Object> exports,
                 void* priv) {
   v8::Isolate* isolate = context->GetIsolate();
   gin_helper::Dictionary dict(isolate, exports);
-  dict.Set("NativeImage", NativeImage::GetConstructor(isolate)
-                              ->GetFunction(context)
-                              .ToLocalChecked());
   gin_helper::Dictionary native_image = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("nativeImage", native_image);
 
@@ -592,4 +623,4 @@ void Initialize(v8::Local<v8::Object> exports,
 
 }  // namespace
 
-NODE_LINKED_MODULE_CONTEXT_AWARE(atom_common_native_image, Initialize)
+NODE_LINKED_MODULE_CONTEXT_AWARE(electron_common_native_image, Initialize)
